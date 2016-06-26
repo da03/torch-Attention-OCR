@@ -10,8 +10,7 @@
  --    RETURNS:
  --        - `LSTM` : constructed LSTM unit (nngraph module)
  --]]
-
-function create_lstm(input_size, rnn_size, n, use_attention, input_feed, dropout)
+function createLSTM(input_size, rnn_size, n, use_attention, input_feed, dropout)
   dropout = dropout or 0 
 
   -- there will be 2*n+1 inputs
@@ -85,12 +84,12 @@ end
 
 function create_decoder_attn(rnn_size, simple)
   -- inputs[1]: 2D tensor target_t (batch_l x rnn_size) and
-  -- inputs[2]: 3D tensor for context (batch_l x source_l x rnn_size)
+  -- inputs[2]: 3D tensor for context (batch_l x source_l x input_size)
   
   local inputs = {}
   table.insert(inputs, nn.Identity()())
   table.insert(inputs, nn.Identity()())
-  local target_t = nn.LinearNoBias(opt.rnn_size, opt.rnn_size)(inputs[1])
+  local target_t = nn.LinearNoBias(rnn_size, rnn_size)(inputs[1])
   local context = inputs[2]
   simple = simple or 0
   -- get attention
@@ -107,7 +106,7 @@ function create_decoder_attn(rnn_size, simple)
   local context_output
   if simple == 0 then
     context_combined = nn.JoinTable(2)({context_combined, inputs[1]}) -- batch_l x rnn_size*2
-    context_output = nn.Tanh()(nn.LinearNoBias(opt.rnn_size*2, opt.rnn_size)(context_combined))
+    context_output = nn.Tanh()(nn.LinearNoBias(rnn_size*2, rnn_size)(context_combined))
   else
     context_output = nn.CAddTable()({context_combined,inputs[1]})
   end   
