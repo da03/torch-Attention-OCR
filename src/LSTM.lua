@@ -20,7 +20,7 @@ function createLSTM(input_size, rnn_size, n, use_attention, input_feed, dropout,
   if use_attention > 0 then
       table.insert(inputs, nn.Identity()()) -- all context (batch_size x source_l x rnn_size)
       offset = offset + 1
-      if input_feed > 1 then
+      if input_feed > 0 then
           table.insert(inputs, nn.Identity()()) -- prev context_attn (batch_size x rnn_size)
           offset = offset + 1
       end
