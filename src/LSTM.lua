@@ -10,7 +10,7 @@
  --    RETURNS:
  --        - `LSTM` : constructed LSTM unit (nngraph module)
  --]]
-function createLSTM(input_size, rnn_size, n, use_attention, input_feed, dropout)
+function createLSTM(input_size, rnn_size, n, use_attention, input_feed, dropout, use_lookup, vocab_size)
   dropout = dropout or 0 
 
   -- there will be 2*n+1 inputs
@@ -37,8 +37,18 @@ function createLSTM(input_size, rnn_size, n, use_attention, input_feed, dropout)
     local prev_h = inputs[L*2+1+offset]
     local prev_c = inputs[L*2+offset]
     -- the input to this layer
-    if L == 1 then x = inputs[1]
+    if L == 1 then
+      if use_lookup > 0 then
+          local embeddings = nn.LookupTable(vocab_size, input_size)
+          x = embeddings(inputs[1])
+      else
+          x = inputs[1]
+      end
       input_size_L = input_size
+      if input_feed > 0 then
+          x = nn.JoinTable(2)({x, inputs[1+offset]}) -- batch_size x (word_vec_size + rnn_size)
+          input_size_L = input_size + rnn_size
+      end    
     else 
       x = outputs[(L-1)*2] 
       if dropout > 0 then x = nn.Dropout(dropout)(x) end -- apply dropout, if any
