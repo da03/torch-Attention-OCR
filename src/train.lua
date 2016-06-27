@@ -14,6 +14,7 @@ require 'data_gen'
 require 'output_unit'
 require 'criterion'
 require 'optim_adadelta'
+require 'paths'
 
 cmd = torch.CmdLine()
 
@@ -27,7 +28,7 @@ cmd:option('-val_data_path', '/mnt/val_shuffled_words.txt', [[The path containin
 cmd:option('-model_dir', 'train', [[The directory for saving and loading model parameters (structure is not stored)]])
 cmd:option('-log_path', 'log.txt', [[The path to put log]])
 cmd:option('-output_dir', 'results', [[The path to put visualization results if visualize is set to True]])
-cmd:option('-steps_per_checkpoint', 400, [[Checkpointing (print perplexity, save model) per how many steps]])
+cmd:option('-steps_per_checkpoint', 4, [[Checkpointing (print perplexity, save model) per how many steps]])
 
 -- Optimization
 cmd:text("")
@@ -48,6 +49,7 @@ cmd:option('-attn_num_layers', 2, [[Number of layers in attention decoder cell (
 cmd:option('-target_vocab_size', 26+10+3, [[Target vocabulary size. Default is = 26+10+3 # 0: PADDING, 1: GO, 2: EOS, >2: 0-9, a-z]])
 
 -- Other
+cmd:option('-phase', 'train', [[train or test]])
 cmd:option('-gpuid', 1, [[Which gpu to use. -1 = use CPU]])
 cmd:option('-load_model', 1, [[Load model from model-dir or not]])
 cmd:option('-seed', 910820, [[Load model from model-dir or not]])
@@ -168,7 +170,12 @@ function train(train_data, valid_data)
                 rnn_state_dec[t] = next_state
             end
             local loss = 0
-            if forward_only == 0 then
+            if forward_only == 1 then
+                for t = target_l, 1, -1 do
+                    local pred = output_unit:forward(preds[t])
+                    _, indices = torch.max(pred, 2)
+                end
+            else
                 local encoder_grads = encoder_grad_proto[{{1, batch_size}, {1, source_l}}]
                 local encoder_bwd_grads = encoder_bwd_grad_proto[{{1, batch_size}, {1, source_l}}]
                 for i = 1, #grad_params do
@@ -240,7 +247,6 @@ function train(train_data, valid_data)
         return loss
     end
     local loss = 0
-    local num_steps = 0
     local num_seen = 0
     for epoch = 1, opt.num_epochs do
         train_data:shuffle()
@@ -254,7 +260,14 @@ function train(train_data, valid_data)
             print (loss/num_seen)
             num_steps = num_steps + 1
             if num_steps % opt.steps_per_checkpoint == 0 then
-                logging(string.format('Step %d - train loss = %f', num_steps, loss/num_seen))
+                print (string.format('Step %d - train loss = %f', num_steps, loss/num_seen))
+                if opt.phase == 'train' then
+                    print ('saving model')
+                    local savefile = paths.concat(opt.model_dir, string.format('model-%d', num_steps))
+                    local finalfile = paths.concat(opt.model_dir, 'final-model')
+                    torch.save(savefile, {{cnn_model, encoder_fw, encoder_bw, decoder, output_unit}, opt, num_steps})
+                    os.execute(string.format('cp %s %s', savefile, finalfile))
+                end
                 num_seen = 0
                 loss = 0
             end
@@ -277,12 +290,25 @@ function main()
     end
     -- Load data
     -- Build model
-    cnn_model = createCNNModel()
-    encoder_fw = createLSTM(input_size, opt.encoder_num_hidden, 1, 0, 0, opt.dropout, 0, 0)
-    encoder_bw = createLSTM(input_size, opt.encoder_num_hidden, 1, 0, 0, opt.dropout, 0, 0)
-    decoder = createLSTM(2*opt.encoder_num_hidden, opt.attn_num_hidden, opt.attn_num_layers, 1, 1, opt.dropout, 1, opt.target_vocab_size)
-    output_unit = createOutputUnit(opt.attn_num_hidden, opt.target_vocab_size)
+    if opt.load_model == 0 or not paths.filep(paths.concat(opt.model_dir, 'final-model')) then
+        cnn_model = createCNNModel()
+        encoder_fw = createLSTM(input_size, opt.encoder_num_hidden, 1, 0, 0, opt.dropout, 0, 0)
+        encoder_bw = createLSTM(input_size, opt.encoder_num_hidden, 1, 0, 0, opt.dropout, 0, 0)
+        decoder = createLSTM(2*opt.encoder_num_hidden, opt.attn_num_hidden, opt.attn_num_layers, 1, 1, opt.dropout, 1, opt.target_vocab_size)
+        output_unit = createOutputUnit(opt.attn_num_hidden, opt.target_vocab_size)
+        num_steps = 0
 
+    else
+        print('loading model')
+        local checkpoint = torch.load(paths.concat(opt.model_dir, 'final-model'))
+        local model, model_opt = checkpoint[1], checkpoint[2]
+        cnn_model = model[1]:double()
+        encoder_fw = model[2]:double()
+        encoder_bw = model[3]:double()
+        decoder = model[4]:double()      
+        output_unit = model[5]:double()
+        num_steps = checkpoint[3]
+    end
     criterion = createCriterion(opt.target_vocab_size)
 
     context_proto = torch.zeros(opt.batch_size, opt.max_encoder_l, opt.encoder_num_hidden)
@@ -306,6 +332,10 @@ function main()
     print(string.format('Load validating data from %s', opt.val_data_path))
     local val_data = DataGen(opt.data_base_dir, opt.val_data_path)
     opt.optim_state = {}
+
+    if not paths.dirp(opt.model_dir) then
+        paths.mkdir(opt.model_dir)
+    end
     train(train_data, val_data)
 end
 
