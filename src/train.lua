@@ -44,20 +44,20 @@ cmd:option('-attn_num_layers', 2, [[Number of layers in attention decoder cell (
 cmd:option('-target_vocag_size', 26+10+3, [[Target vocabulary size. Default is = 26+10+3 # 0: PADDING, 1: GO, 2: EOS, >2: 0-9, a-z]])
 
 -- Other
-cmd:option('-gpuid', -1, [[Which gpu to use. -1 = use CPU]])
+cmd:option('-gpuid', 1, [[Which gpu to use. -1 = use CPU]])
 cmd:option('-load_model', 1, [[Load model from model-dir or not]])
 cmd:option('-seed', 910820, [[Load model from model-dir or not]])
 cmd:option('-max_decoder_l', 30, [[Maximum number of output targets]])
 cmd:option('-max_encoder_l', 50, [[Maximum length of input feature sequence]])
 
 opt = cmd:parse(arg)
+assert (opt.gpuid > 0, 'only supports gpu!')
 torch.manualSeed(opt.seed)
 
 function train(train_data, valid_data)
     local num_params = 0
     params, grad_params = {}, {}
     for i = 1, #layers do
-        print (i)
         local p, gp = layers[i]:getParameters()
         --p:uniform(-opt.param_init, opt.param_init)
         num_params = num_params + p:size(1)
@@ -69,8 +69,8 @@ function train(train_data, valid_data)
     local encoder_h_init = torch.zeros(opt.batch_size, opt.encoder_num_hidden)
     local decoder_h_init = torch.zeros(opt.batch_size, opt.attn_num_hidden)
     if opt.gpuid > 0 then
-        encoder_h_init:cuda()
-        decoder_h_init:cuda()
+        encoder_h_init = encoder_h_init:cuda()
+        decoder_h_init = decoder_h_init:cuda()
     end
     init_fwd_enc = {}
     init_bwd_enc = {}
@@ -92,39 +92,59 @@ function train(train_data, valid_data)
     end
 
     -- train
-    function step(input_batch, target_batch, forward_only)
+    function step(batch, forward_only)
+        local input_batch = batch[1]
+        local target_batch = batch[2]
+        local batch_size = input_batch:size()[1]
+        local decoder_l = target_batch:size()[2]
+        if opt.gpuid > 0 then
+            input_batch = input_batch:cuda()
+        end
+        print (input_batch:size())
         cnn_model:training()
         local feval = function(p)
             --gradParams:zero()
             local cnn_output = cnn_model:forward(inputBatch)
+            local source_l = cnn_output:size()[2]
+            source = cnn_output.transpose(1,2)
+            target = target_batch.transpose(1,2)
+            print (source_l)
+            local context = context_proto[{{1, batch_size}, {1, source_l}}]
             -- forward encoder
+            local rnn_state_enc = reset_state(init_fwd_enc, batch_size, 0)
             for t = 1, source_l do
-                encoder_clones[t]:training()
+                encoder_fw_clones[t]:training()
                 local encoder_input = {source[t], table.unpack(rnn_state_enc[t-1])}
-                local out = encoder_clones[t]:forward(encoder_input)
+                local out = encoder_fw_clones[t]:forward(encoder_input)
                 rnn_state_enc[t] = out
                 context[{{},t}]:copy(out[#out])
             end
-            -- set decoder states
-            for L = 1, opt.num_layers do
-                rnn_state_dec[0][L*2-1+opt.input_feed]:copy(rnn_state_enc[source_l][L*2-1])
-                rnn_state_dec[0][L*2+opt.input_feed]:copy(rnn_state_enc[source_l][L*2])
-            end
-            -- backward encoder
+            local rnn_state_enc_bwd = reset_state(init_fwd_enc, batch_size, source_l+1)
             for t = source_l, 1, -1 do
                 encoder_bwd_clones[t]:training()
                 local encoder_input = {source[t], table.unpack(rnn_state_enc_bwd[t+1])}
                 local out = encoder_bwd_clones[t]:forward(encoder_input)
                 rnn_state_enc_bwd[t] = out
-                context[{{},t}]:add(out[#out])          
+                context[{{},t}]:cat(out[#out])          
             end
+            -- set decoder states
+            local rnn_state_dec = reset_state(init_fwd_dec, batch_size, 0)
+            for L = 1, opt.attn_num_layers do
+                rnn_state_dec[0][L*2-1+opt.input_feed]:copy(rnn_state_enc[source_l][L*2-1]:cat(rnn_state_enc_bwd[1][L*2-1]))
+                rnn_state_dec[0][L*2+opt.input_feed]:copy(rnn_state_enc[source_l][L*2]:cat(rnn_state_enc_bwd[1][L*2]))
+            end
+            -- forward decoder
+            for t = 1, target_l do
+                decoder_clones[t]:training()
+                local decoder_input = = {target[t], context, table.unpack(rnn_state_dec[t-1])}
             for L = 1, opt.attn_num_layers do
                 rnn_state_dec[0][L*2-1+opt.input_feed]:add(rnn_state_enc_bwd[1][L*2-1])
                 rnn_state_dec[0][L*2+opt.input_feed]:add(rnn_state_enc_bwd[1][L*2])
             end
+            local preds = {}
             for t = 1, target_l do
                 decoder_clones[t]:training()
-                decoder_input = {target[t], context, table.unpack(rnn_state_dec[t-1])}
+                local decoder_input = {target[t], context, table.unpack(rnn_state_dec[t-1])}
                 local out = decoder_clones[t]:forward(decoder_input)
                 local next_state = {}
                 table.insert(preds, out[#out])
@@ -147,11 +167,14 @@ function train(train_data, valid_data)
     local num_steps = 0
     for epoch = 1, opt.num_epochs do
         train_data:shuffle()
-        for batch_id = 1, train_data:size()/opt.batch_size do
-            train_batch = train_data:nextBatch()
+        while true do
+            train_batch = train_data:nextBatch(opt.batch_size)
+            if train_batch == nil then
+                break
+            end
             loss = step(train_batch, 0)
             num_steps = num_steps + 1
-            if iteratations % opt.steps_per_checkpoint == 0 then
+            if num_steps % opt.steps_per_checkpoint == 0 then
                 logging(string.format('Step %d - train loss = %f', num_steps, loss))
             end
         end
@@ -182,6 +205,7 @@ function main()
     encoder_fw_clones = clone_many_times(encoder_fw, opt.max_encoder_l)
     encoder_bw_clones = clone_many_times(encoder_bw, opt.max_encoder_l)
 
+    context_proto = torch.zeros(opt.batch_size, opt.max_encoder_l, opt.lstm_num_hidden)
     layers = {cnn_model, encoder_fw, encoder_bw, decoder}
     if opt.gpuid >= 0 then
         for i = 1, #layers do

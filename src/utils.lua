@@ -24,3 +24,21 @@ function split(str)
     end
     return t
 end
+
+function reset_state(state, batch_l, t)
+    if t == nil then
+        local u = {}
+        for i = 1, #state do
+            state[i]:zero()
+            table.insert(u, state[i][{{1, batch_l}}])
+        end
+        return u
+    else
+        local u = {[t] = {}}
+        for i = 1, #state do
+            state[i]:zero()
+            table.insert(u[t], state[i][{{1, batch_l}}])
+        end
+        return u
+    end      
+end

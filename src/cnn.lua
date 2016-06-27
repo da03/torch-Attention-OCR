@@ -1,6 +1,9 @@
-function createCNNModel()
+function createCNNModel(use_cuda)
     local model = nn.Sequential()
 
+    --if use_cuda > 0 then
+    --    model:add(nn.Copy('torch.FloatTensor', 'torch.CudaTensor', false, true))
+    --end
     -- input shape: (None, 1, 32, None)
     -- CNN part
     model:add(nn.AddConstant(-128.0))
@@ -38,8 +41,9 @@ function createCNNModel()
     model:add(nn.SpatialBatchNormalization(512))
     model:add(cudnn.ReLU(true))
 
-    model:add(nn.View(512, -1):setNumInputDims(3)) -- (None, 512)
-
+    model:add(nn.View(512, -1):setNumInputDims(3)) -- (None, 512, None)
+    model:add(nn.Transpose({2, 3})) -- (None, None, 512)
+    --model:add(nn.Copy('torch.CudaTensor', 'torch.FloatTensor', false, true))
     --model:cuda()
     return model
 
