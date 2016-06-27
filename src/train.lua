@@ -36,12 +36,11 @@ cmd:option('-initial_learning_rate', 0.001, [[Initial learning rate, note the we
 -- Network
 cmd:option('-dropout', 0.3, [[Dropout probability]])
 cmd:option('-target_embedding_size', 10, [[Embedding dimension for each target]])
-cmd:option('-target_embedding_size', 10, [[Embedding dimension for each target]])
 cmd:option('-attn_use_lstm', 1, [[Whether or not use LSTM attention decoder cell]])
 cmd:option('-attn_num_hidden', 128, [[Number of hidden units in attention decoder cell]])
 cmd:option('-encoder_num_hidden', 127, [[Number of hidden units in encoder cell]])
 cmd:option('-attn_num_layers', 2, [[Number of layers in attention decoder cell (Encoder number of hidden units will be attn-num-hidden*attn-num-layers)]])
-cmd:option('-target_vocag_size', 26+10+3, [[Target vocabulary size. Default is = 26+10+3 # 0: PADDING, 1: GO, 2: EOS, >2: 0-9, a-z]])
+cmd:option('-target_vocab_size', 26+10+3, [[Target vocabulary size. Default is = 26+10+3 # 0: PADDING, 1: GO, 2: EOS, >2: 0-9, a-z]])
 
 -- Other
 cmd:option('-gpuid', 1, [[Which gpu to use. -1 = use CPU]])
@@ -103,7 +102,9 @@ function train(train_data, valid_data)
         print (input_batch:size())
         cnn_model:training()
         local feval = function(p)
-            --gradParams:zero()
+            if p ~= params then
+               params:copy(p)
+            end
             local cnn_output = cnn_model:forward(inputBatch)
             local source_l = cnn_output:size()[2]
             source = cnn_output.transpose(1,2)
@@ -156,12 +157,34 @@ function train(train_data, valid_data)
                 end
                 rnn_state_dec[t] = next_state
             end
-            local f = criterion:forward(outputBatch, targetBatch)
-            model:backward(inputBatch, criterion:backward(outputBatch, targetBatch))
-            gradParams:div(nFrame)
-            f = f / nFrame
-            return f, gradParams
+            if forward_only == 0 then
+                for i = 1, #grad_params do
+                    grad_params[i]:zero()
+                end
+                local drnn_state_dec = reset_state(init_bwd_dec, batch_size)
+                local loss = 0
+                 for t = target_l, 1, -1 do
+                     local pred = outputUnit:forward(preds[t])
+                     loss = loss + criterion:forward(pred, target[t])/batch_size
+                     local dl_dpred = criterion:backward(pred, target[t])
+                     dl_dpred:div(batch_size)
+                     local dl_dtarget = generator:backward(preds[t], dl_dpred)
+                     drnn_state_dec[#drnn_state_dec]:add(dl_dtarget)
+                     local decoder_input = {target[t], context, table.unpack(rnn_state_dec[t-1])}
+                     local dlst = decoder_clones[t]:backward(decoder_input, drnn_state_dec)
+                     encoder_grads:add(dlst[2])
+                     encoder_bwd_grads:add(dlst[2])
+                     drnn_state_dec[#drnn_state_dec]:zero()
+                     if opt.input_feed == 1 then
+                         drnn_state_dec[#drnn_state_dec]:add(dlst[3])
+                     end     
+                     for j = dec_offset, #dlst do
+                         drnn_state_dec[j-dec_offset+1]:copy(dlst[j])
+                     end  
+            return f, grad_params
         end
+        local _, loss = optimMethod(feval, params, {}); loss = loss[1]
+        return loss
     end
     local loss
     local num_steps = 0
@@ -200,13 +223,15 @@ function main()
     encoder_fw = createLSTM(input_size, opt.encoder_num_hidden, 1, 0, 0, opt.dropout)
     encoder_bw = createLSTM(input_size, opt.encoder_num_hidden, 1, 0, 0, opt.dropout)
     decoder = createLSTM(2*opt.encoder_num_hidden, opt.attn_num_hidden, n, 1, 1, opt.dropout)
+    outputUnit = createOutputUnit(opt.attn_num_hidden, opt.target_vocab_size)
 
+    criterion = createCriterion(opt.target_vocab_size)
     decoder_clones = clone_many_times(decoder, opt.max_decoder_l)
     encoder_fw_clones = clone_many_times(encoder_fw, opt.max_encoder_l)
     encoder_bw_clones = clone_many_times(encoder_bw, opt.max_encoder_l)
 
     context_proto = torch.zeros(opt.batch_size, opt.max_encoder_l, opt.lstm_num_hidden)
-    layers = {cnn_model, encoder_fw, encoder_bw, decoder}
+    layers = {cnn_model, encoder_fw, encoder_bw, decoder, outputUnit}
     if opt.gpuid >= 0 then
         for i = 1, #layers do
             layers[i]:cuda()
