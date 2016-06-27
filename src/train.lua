@@ -49,7 +49,7 @@ cmd:option('-attn_num_layers', 2, [[Number of layers in attention decoder cell (
 cmd:option('-target_vocab_size', 26+10+3, [[Target vocabulary size. Default is = 26+10+3 # 0: PADDING, 1: GO, 2: EOS, >2: 0-9, a-z]])
 
 -- Other
-cmd:option('-phase', 'train', [[train or test]])
+cmd:option('-phase', 'test', [[train or test]])
 cmd:option('-gpuid', 1, [[Which gpu to use. -1 = use CPU]])
 cmd:option('-load_model', 1, [[Load model from model-dir or not]])
 cmd:option('-seed', 910820, [[Load model from model-dir or not]])
@@ -65,7 +65,6 @@ function train(train_data, valid_data)
     params, grad_params = {}, {}
     for i = 1, #layers do
         local p, gp = layers[i]:getParameters()
-        --p:uniform(-opt.param_init, opt.param_init)
         num_params = num_params + p:size(1)
         params[i] = p
         grad_params[i] = gp
@@ -151,7 +150,7 @@ function train(train_data, valid_data)
             for t = 1, target_l do
                 decoder_clones[t]:training()
                 local decoder_input
-                if forward_only == 0 then
+                if forward_only == 0 or t == 1 then
                     decoder_input = {target[t], context, table.unpack(rnn_state_dec[t-1])}
                 else
                     decoder_input = {indices, context, table.unpack(rnn_state_dec[t-1])}
@@ -161,6 +160,7 @@ function train(train_data, valid_data)
                 table.insert(preds, out[#out])
                 local pred = output_unit:forward(preds[t])
                 _, indices = torch.max(pred, 2)
+                indices = indices:view(indices:nElement())
                 if opt.input_feed == 1 then
                     table.insert(next_state, out[#out])
                 end
@@ -173,6 +173,7 @@ function train(train_data, valid_data)
             if forward_only == 1 then
                 for t = target_l, 1, -1 do
                     local pred = output_unit:forward(preds[t])
+                    loss = loss + criterion:forward(pred, target[t])/batch_size
                     _, indices = torch.max(pred, 2)
                 end
             else
@@ -243,19 +244,30 @@ function train(train_data, valid_data)
             return loss, grad_params
         end
         local optim_state = opt.optim_state
-        local _, loss = optim.adadelta_list(feval, params, optim_state); loss = loss[1]
-        return loss
+        if forward_only == 0 then
+            local _, loss = optim.adadelta_list(feval, params, optim_state); loss = loss[1]
+            return loss
+        else
+            loss, _ = feval(params)
+            return loss -- todo: accuracy
+        end
     end
     local loss = 0
     local num_seen = 0
     for epoch = 1, opt.num_epochs do
         train_data:shuffle()
+        local forward_only
+        if opt.phase == 'train' then
+            forward_only = 0
+        else
+            forward_only = 1
+        end
         while true do
             train_batch = train_data:nextBatch(opt.batch_size)
             if train_batch == nil then
                 break
             end
-            loss = loss + step(train_batch, 0)
+            loss = loss + step(train_batch, forward_only)
             num_seen = num_seen + 1
             print (loss/num_seen)
             num_steps = num_steps + 1
@@ -264,9 +276,11 @@ function train(train_data, valid_data)
                 if opt.phase == 'train' then
                     print ('saving model')
                     local savefile = paths.concat(opt.model_dir, string.format('model-%d', num_steps))
+                    local finalfile_tmp = paths.concat(opt.model_dir, '.final-model.tmp')
                     local finalfile = paths.concat(opt.model_dir, 'final-model')
                     torch.save(savefile, {{cnn_model, encoder_fw, encoder_bw, decoder, output_unit}, opt, num_steps})
-                    os.execute(string.format('cp %s %s', savefile, finalfile))
+                    os.execute(string.format('cp %s %s', savefile, finalfile_tmp))
+                    os.execute(string.format('mv %s %s', finalfile_tmp, finalfile))
                 end
                 num_seen = 0
                 loss = 0
