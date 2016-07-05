@@ -19,7 +19,7 @@ cmd:text('')
 cmd:text('**Input and Output**')
 cmd:text('')
 cmd:option('-data_base_dir', '/n/rush_lab/data/image_data/90kDICT32px', [[The base directory of the image path in data-path. If the image path in data-path is absolute path, set it to /]])
-cmd:option('-data_path', '/n/rush_lab/data/image_data/train_shuffled_words.txt', [[The path containing data file names and labels. Format per line: image_path characters]])
+cmd:option('-data_path', '/n/rush_lab/data/image_data/val_shuffled_words.txt', [[The path containing data file names and labels. Format per line: image_path characters]])
 cmd:option('-val_data_path', '/n/rush_lab/data/image_data/val_shuffled_words.txt', [[The path containing validate data file names and labels. Format per line: image_path characters]])
 cmd:option('-model_dir', 'train', [[The directory for saving and loading model parameters (structure is not stored)]])
 cmd:option('-log_path', 'log.txt', [[The path to put log]])
@@ -40,7 +40,7 @@ cmd:option('-input_feed', false, [[Whether or not use LSTM attention decoder cel
 cmd:option('-encoder_num_hidden', 512, [[Number of hidden units in encoder cell]])
 cmd:option('-encoder_num_layers', 1, [[Number of hidden layers in encoder cell]])
 cmd:option('-decoder_num_layers', 2, [[Number of hidden units in decoder cell]])
-cmd:option('-target_vocab_size', 26+10+3, [[Target vocabulary size. Default is = 26+10+3 # 0: PADDING, 1: GO, 2: EOS, >2: 0-9, a-z]])
+cmd:option('-target_vocab_size', 26+10+3, [[Target vocabulary size. Default is = 26+10+3 # 1: PADDING, 2: GO, 3: EOS, >3: 0-9, a-z]])
 
 -- Other
 cmd:option('-phase', 'train', [[train or test]])
@@ -71,7 +71,8 @@ function train(model, phase, batch_size, num_epochs, train_data, val_data, model
             if train_batch == nil then
                 break
             end
-            loss = loss + model:step(train_batch, forward_only)
+            local step_loss = model:step(train_batch, forward_only)
+            loss = loss + step_loss
             num_seen = num_seen + 1
             --print (loss/num_seen)
             model.global_step = model.global_step + 1

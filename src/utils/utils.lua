@@ -93,3 +93,19 @@ function localize(thing)
     end
     return thing
 end
+
+function str2numlist(label_str)
+    local label_list = {2}
+    for c in label_str:gmatch"." do
+        local l = string.byte(c)
+        local vocab_id
+        if l > 96 then
+            vocab_id = l - 97 + 12 + 1
+        else
+            vocab_id = l - 48 + 13 + 1
+        end
+        table.insert(label_list, vocab_id)
+    end
+    table.insert(label_list, 3)
+    return label_list
+end
