@@ -1,5 +1,6 @@
  --[[ Training, adapted from https://github.com/harvardnlp/seq2seq-attn/blob/master/train.lua
 --]]
+torch.setheaptracking(true)
 require 'nn'
 require 'nngraph'
 require 'hdf5'
@@ -11,20 +12,19 @@ package.path = package.path .. ';src/?.lua' .. ';src/data/?.lua' .. ';src/utils/
 require 'model'
 require 'data_gen'
 require 'logging'
-
 cmd = torch.CmdLine()
 
 -- Input and Output
 cmd:text('')
 cmd:text('**Input and Output**')
 cmd:text('')
-cmd:option('-data_base_dir', '/mnt/90kDICT32px', [[The base directory of the image path in data-path. If the image path in data-path is absolute path, set it to /]])
-cmd:option('-data_path', '/mnt/val_shuffled_words.txt', [[The path containing data file names and labels. Format per line: image_path characters]])
-cmd:option('-val_data_path', '/mnt/val_shuffled_words.txt', [[The path containing validate data file names and labels. Format per line: image_path characters]])
+cmd:option('-data_base_dir', '/n/rush_lab/data/image_data/90kDICT32px', [[The base directory of the image path in data-path. If the image path in data-path is absolute path, set it to /]])
+cmd:option('-data_path', '/n/rush_lab/data/image_data/train_shuffled_words.txt', [[The path containing data file names and labels. Format per line: image_path characters]])
+cmd:option('-val_data_path', '/n/rush_lab/data/image_data/val_shuffled_words.txt', [[The path containing validate data file names and labels. Format per line: image_path characters]])
 cmd:option('-model_dir', 'train', [[The directory for saving and loading model parameters (structure is not stored)]])
 cmd:option('-log_path', 'log.txt', [[The path to put log]])
 cmd:option('-output_dir', 'results', [[The path to put visualization results if visualize is set to True]])
-cmd:option('-steps_per_checkpoint', 4, [[Checkpointing (print perplexity, save model) per how many steps]])
+cmd:option('-steps_per_checkpoint', 40, [[Checkpointing (print perplexity, save model) per how many steps]])
 
 -- Optimization
 cmd:text('')
@@ -32,24 +32,23 @@ cmd:text('**Optimization**')
 cmd:text('')
 cmd:option('-num_epochs', 1000, [[The number of whole data passes]])
 cmd:option('-batch_size', 64, [[Batch size]])
-cmd:option('-initial_learning_rate', 0.001, [[Initial learning rate, note the we use AdaDelta, so the initial value doe not matter much]])
 
 -- Network
 cmd:option('-dropout', 0.3, [[Dropout probability]])
 cmd:option('-target_embedding_size', 20, [[Embedding dimension for each target]])
 cmd:option('-input_feed', false, [[Whether or not use LSTM attention decoder cell]])
 cmd:option('-encoder_num_hidden', 512, [[Number of hidden units in encoder cell]])
-cmd:option('-encoder_num_layers', 2, [[Number of hidden layers in encoder cell]])
-cmd:option('-decoder_num_layers', 3, [[Number of hidden units in decoder cell]])
+cmd:option('-encoder_num_layers', 1, [[Number of hidden layers in encoder cell]])
+cmd:option('-decoder_num_layers', 2, [[Number of hidden units in decoder cell]])
 cmd:option('-target_vocab_size', 26+10+3, [[Target vocabulary size. Default is = 26+10+3 # 0: PADDING, 1: GO, 2: EOS, >2: 0-9, a-z]])
 
 -- Other
-cmd:option('-phase', 'test', [[train or test]])
-cmd:option('-gpu_id', 3, [[Which gpu to use. <=0 means use CPU]])
+cmd:option('-phase', 'train', [[train or test]])
+cmd:option('-gpu_id', 2, [[Which gpu to use. <=0 means use CPU]])
 cmd:option('-load_model', false, [[Load model from model-dir or not]])
 cmd:option('-seed', 910820, [[Load model from model-dir or not]])
-cmd:option('-max_decoder_l', 30, [[Maximum number of output targets]])
-cmd:option('-max_encoder_l', 50, [[Maximum length of input feature sequence]])
+cmd:option('-max_decoder_l', 50, [[Maximum number of output targets]])
+cmd:option('-max_encoder_l', 80, [[Maximum length of input feature sequence]]) --320*10/4-1
 
 opt = cmd:parse(arg)
 torch.manualSeed(opt.seed)
@@ -81,10 +80,13 @@ function train(model, phase, batch_size, num_epochs, train_data, val_data, model
                 if phase == 'train' then
                     logging:info('Saving model')
                     local model_path = paths.concat(model_dir, string.format('model-%d', model.global_step))
-                    model:save(model_path)
-                    logging:info(string.format('Model saved to %s', model_path))
                     local final_model_path_tmp = paths.concat(model_dir, '.final-model.tmp')
                     local final_model_path = paths.concat(model_dir, 'final-model')
+                    if model.global_step % 1000 ~= 0 then
+                        model_path = final_model_path
+                    end
+                    model:save(model_path)
+                    logging:info(string.format('Model saved to %s', model_path))
                     os.execute(string.format('cp %s %s', model_path, final_model_path_tmp))
                     os.execute(string.format('mv %s %s', final_model_path_tmp, final_model_path))
                 end
@@ -107,6 +109,7 @@ function main()
 
     local model_dir = opt.model_dir
     local load_model = opt.load_model
+    local steps_per_checkpoint = opt.steps_per_checkpoint
 
     local gpu_id = opt.gpu_id
     local seed = opt.seed
@@ -140,11 +143,13 @@ function main()
 
     -- Load data
     logging:info(string.format('Load training data from %s', opt.data_path))
-    local train_data = DataGen(opt.data_base_dir, opt.data_path)
-    logging:info(string.format('Load validating data from %s', opt.val_data_path))
-    local val_data = DataGen(opt.data_base_dir, opt.val_data_path)
+    local train_data = DataGen(opt.data_base_dir, opt.data_path, 10.0)
+    logging:info(string.format('Training data loaded from %s', opt.data_path))
+    logging:info(string.format('Load validation data from %s', opt.val_data_path))
+    local val_data = DataGen(opt.data_base_dir, opt.val_data_path, 10.0)
+    logging:info(string.format('Validation data loaded from %s', opt.val_data_path))
 
-    train(model, phase, batch_size, num_epochs, train_data, val_data)
+    train(model, phase, batch_size, num_epochs, train_data, val_data, model_dir, steps_per_checkpoint)
 
     logging:shutdown()
 end
