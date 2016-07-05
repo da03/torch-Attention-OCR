@@ -72,7 +72,7 @@ function DataGen:nextBatch(batch_size)
             local origH = img:size()[2]
             local origW = img:size()[3]
             local aspect_ratio = origW / origH
-            aspect_ratio = math.max(aspect_ratio, self.max_aspect_ratio)
+            aspect_ratio = math.min(aspect_ratio, self.max_aspect_ratio)
             local imgW = math.ceil(aspect_ratio *self.imgH)
             img = image.scale(img, imgW, self.imgH)
             if self.buffer[imgW] == nil then
@@ -86,15 +86,21 @@ function DataGen:nextBatch(batch_size)
                     images[i]:copy(self.buffer[imgW][i][1])
                     max_target_length = math.max(max_target_length, #self.buffer[imgW][i][2])
                 end
-                local targets = torch.IntTensor(batch_size, max_target_length):fill(1)
+                -- targets: use as input. SOS, ch1, ch2, ..., chn
+                local targets = torch.IntTensor(batch_size, max_target_length-1):fill(1)
+                -- targets_eval: use for evaluation. ch1, ch2, ..., chn, EOS
+                local targets_eval = torch.IntTensor(batch_size, max_target_length-1):fill(1)
+                local num_nonzeros = 0
                 for i = 1, #self.buffer[imgW] do
-                     for j = 1, #self.buffer[imgW][i][2] do
-                         targets[i][j] = self.buffer[imgW][i][2][j] 
-                     end
+                    num_nonzeros = num_nonzeros + #self.buffer[imgW][i][2] - 1
+                    for j = 1, #self.buffer[imgW][i][2]-1 do
+                        targets[i][j] = self.buffer[imgW][i][2][j] 
+                        targets_eval[i][j] = self.buffer[imgW][i][2][j+1] 
+                    end
                 end
                 self.buffer[imgW] = nil
-                collectgarbage()
-                do return {images, targets} end
+                --collectgarbage()
+                do return {images, targets, targets_eval, num_nonzeros} end
             end
         end
     end
@@ -119,6 +125,6 @@ function DataGen:nextBatch(batch_size)
         end
     end
     self.buffer[imgW] = nil
-    collectgarbage()
+    --collectgarbage()
     return {images, targets}
 end

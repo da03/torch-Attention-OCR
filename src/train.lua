@@ -24,7 +24,10 @@ cmd:option('-val_data_path', '/n/rush_lab/data/image_data/val_shuffled_words.txt
 cmd:option('-model_dir', 'train', [[The directory for saving and loading model parameters (structure is not stored)]])
 cmd:option('-log_path', 'log.txt', [[The path to put log]])
 cmd:option('-output_dir', 'results', [[The path to put visualization results if visualize is set to True]])
-cmd:option('-steps_per_checkpoint', 40, [[Checkpointing (print perplexity, save model) per how many steps]])
+
+-- Display
+cmd:option('-steps_per_checkpoint', 100, [[Checkpointing (print perplexity, save model) per how many steps]])
+cmd:option('-num_batches_val', math.huge, [[Number of batches to evaluate.]])
 
 -- Optimization
 cmd:text('')
@@ -47,15 +50,17 @@ cmd:option('-phase', 'train', [[train or test]])
 cmd:option('-gpu_id', 2, [[Which gpu to use. <=0 means use CPU]])
 cmd:option('-load_model', false, [[Load model from model-dir or not]])
 cmd:option('-seed', 910820, [[Load model from model-dir or not]])
-cmd:option('-max_decoder_l', 50, [[Maximum number of output targets]])
+cmd:option('-max_decoder_l', 50, [[Maximum number of output targets]]) -- when evaluate, this is the cut-off length.
 cmd:option('-max_encoder_l', 80, [[Maximum length of input feature sequence]]) --320*10/4-1
 
 opt = cmd:parse(arg)
 torch.manualSeed(opt.seed)
 
-function train(model, phase, batch_size, num_epochs, train_data, val_data, model_dir, steps_per_checkpoint)
+function train(model, phase, batch_size, num_epochs, train_data, val_data, model_dir, steps_per_checkpoint, num_batches_val)
     local loss = 0
     local num_seen = 0
+    local num_nonzeros = 0
+    local accuracy = 0
     for epoch = 1, num_epochs do
         train_data:shuffle()
         local forward_only
@@ -71,14 +76,18 @@ function train(model, phase, batch_size, num_epochs, train_data, val_data, model
             if train_batch == nil then
                 break
             end
-            local step_loss = model:step(train_batch, forward_only)
+            local step_loss, stats = model:step(train_batch, forward_only)
             loss = loss + step_loss
             num_seen = num_seen + 1
+            num_nonzeros = num_nonzeros + stats[1]
             --print (loss/num_seen)
             model.global_step = model.global_step + 1
             if model.global_step % steps_per_checkpoint == 0 then
-                logging:info(string.format('Step %d - train loss = %f', model.global_step, loss/num_seen))
-                if phase == 'train' then
+                if forward_only then
+                    accuracy = accuracy + stats[2]
+                    logging:info(string.format('Step %d - Accuracy = %f, Perplexity = %f', model.global_step, accuracy/num_seen, math.exp(loss/num_nonzeros)))
+                else
+                    logging:info(string.format('Step %d - training perplexity = %f', model.global_step, math.exp(loss/num_nonzeros)))
                     logging:info('Saving model')
                     local model_path = paths.concat(model_dir, string.format('model-%d', model.global_step))
                     local final_model_path_tmp = paths.concat(model_dir, '.final-model.tmp')
@@ -90,9 +99,33 @@ function train(model, phase, batch_size, num_epochs, train_data, val_data, model
                     logging:info(string.format('Model saved to %s', model_path))
                     os.execute(string.format('cp %s %s', model_path, final_model_path_tmp))
                     os.execute(string.format('mv %s %s', final_model_path_tmp, final_model_path))
+
+                    -- Evaluate on val data
+                    logging:info(string.format('Evaluating model on %s batches of validation data', num_batches_val))
+                    local val_loss = 0
+                    local val_num_seen = 0
+                    local val_num_nonzeros = 0
+                    local val_accuracy = 0
+                    local b = 1
+                    while b < num_batches_val do
+                        val_batch = val_data:nextBatch(batch_size)
+                        if val_batch == nil then
+                            val_data:shuffle()
+                        end
+                        b = b+1
+                        local step_loss, stats = model:step(val_batch, true)
+                        val_loss = val_loss + step_loss
+                        val_num_seen = val_num_seen + 1
+                        val_num_nonzeros = val_num_nonzeros + stats[1]
+                        val_accuracy = val_accuracy + stats[2]
+                    end
+                    logging:info(string.format('Step %d - Val Accuracy = %f, Val Perplexity = %f', model.global_step, val_accuracy/val_num_seen, math.exp(val_loss/val_num_nonzeros)))
+                    collectgarbage()
                 end
                 num_seen = 0
+                num_nonzeros = 0
                 loss = 0
+                accuracy = 0
             end
         end
     end
@@ -111,6 +144,7 @@ function main()
     local model_dir = opt.model_dir
     local load_model = opt.load_model
     local steps_per_checkpoint = opt.steps_per_checkpoint
+    local num_batches_val = opt.num_batches_val
 
     local gpu_id = opt.gpu_id
     local seed = opt.seed
@@ -150,7 +184,7 @@ function main()
     local val_data = DataGen(opt.data_base_dir, opt.val_data_path, 10.0)
     logging:info(string.format('Validation data loaded from %s', opt.val_data_path))
 
-    train(model, phase, batch_size, num_epochs, train_data, val_data, model_dir, steps_per_checkpoint)
+    train(model, phase, batch_size, num_epochs, train_data, val_data, model_dir, steps_per_checkpoint, num_batches_val)
 
     logging:shutdown()
 end

@@ -27,7 +27,7 @@ function optim.adadelta_list(opfunc, x, config, state)
     local eps = config.eps or 1e-6
     local wd = config.weightDecay or 0
     -- (1) evaluate f(x) and df/dx
-    local fx,dfdx = opfunc(x)
+    local fx,dfdx,stats = opfunc(x)
 
     for i = 1, #x do
         -- (2) weight decay
@@ -57,6 +57,6 @@ function optim.adadelta_list(opfunc, x, config, state)
         state[i].evalCounter = state[i].evalCounter + 1
     end
         -- return x*, f(x) before optimization
-    return x,{fx}
+    return x,{fx}, stats
 end
 

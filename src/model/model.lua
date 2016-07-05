@@ -151,6 +151,7 @@ function model:_build()
     self.context_proto = localize(torch.zeros(self.batch_size, self.max_encoder_l, 2*self.encoder_num_hidden))
     self.encoder_fw_grad_proto = localize(torch.zeros(self.batch_size, self.max_encoder_l, self.encoder_num_hidden))
     self.encoder_bw_grad_proto = localize(torch.zeros(self.batch_size, self.max_encoder_l, self.encoder_num_hidden))
+    self.cnn_grad_proto = localize(torch.zeros(self.batch_size, self.max_encoder_l, self.cnn_feature_size))
 
     local num_params = 0
     self.params, self.grad_params = {}, {}
@@ -196,8 +197,23 @@ end
 function model:step(batch, forward_only)
     local input_batch = localize(batch[1])
     local target_batch = localize(batch[2])
+    local target_eval_batch = localize(batch[3])
+    local num_nonzeros = batch[4]
+
     local batch_size = input_batch:size()[1]
-    local decoder_l = target_batch:size()[2]
+    local target_l = target_batch:size()[2]
+
+    assert(target_l <= self.max_decoder_l, string.format('max_decoder_l (%d) < target_l (%d)!', self.max_decoder_l, target_l))
+    -- if forward only, then re-generate the target batch
+    if forward_only then
+        local target_batch_new = localize(torch.IntTensor(batch_size, self.max_decoder_l)):fill(1)
+        target_batch_new[{{1,batch_size}, {1,target_l}}]:copy(target_batch)
+        target_batch = target_batch_new
+        local target_eval_batch_new = localize(torch.IntTensor(batch_size, self.max_decoder_l)):fill(1)
+        target_eval_batch_new[{{1,batch_size}, {1,target_l}}]:copy(target_eval_batch)
+        target_eval_batch = target_eval_batch_new
+        target_l = self.max_decoder_l
+    end
 
     if not forward_only then
         self.cnn_model:training()
@@ -210,9 +226,10 @@ function model:step(batch, forward_only)
     local feval = function(p) --cut off when evaluate
         local cnn_output = self.cnn_model:forward(input_batch)
         local source_l = cnn_output:size()[2]
-        local target_l = target_batch:size()[2]
+        assert(source_l <= self.max_encoder_l, string.format('max_encoder_l (%d) < source_l (%d)!', self.max_encoder_l, source_l))
         source = cnn_output:transpose(1,2)
         target = target_batch:transpose(1,2)
+        target_eval = target_eval_batch:transpose(1,2)
         local context = self.context_proto[{{1, batch_size}, {1, source_l}}]
         -- forward encoder
         local rnn_state_enc = reset_state(self.init_fwd_enc, batch_size, 0)
@@ -281,13 +298,17 @@ function model:step(batch, forward_only)
             end
             rnn_state_dec[t] = next_state
         end
-        local loss = 0
+        local loss, accuracy = 0.0, 0.0
         if forward_only then
-            for t = target_l, 1, -1 do
+            local labels = localize(torch.zeros(batch_size, target_l)):fill(1)
+            for t = 1, target_l do
                 local pred = self.output_projector:forward(preds[t])
                 loss = loss + self.criterion:forward(pred, target[t])/batch_size
-                _, indices = torch.max(pred, 2)
+                local _, indices = torch.max(pred, 2)
+                indices = indices:view(indices:nElement())
+                labels[{{1,batch_size}, t}]:copy(indices)
             end
+            accuracy = 1.0 - evalWordErrRate(labels, target_eval_batch)
         else
             local encoder_fw_grads = self.encoder_fw_grad_proto[{{1, batch_size}, {1, source_l}}]
             local encoder_bw_grads = self.encoder_bw_grad_proto[{{1, batch_size}, {1, source_l}}]
@@ -299,8 +320,8 @@ function model:step(batch, forward_only)
             local drnn_state_dec = reset_state(self.init_bwd_dec, batch_size)
             for t = target_l, 1, -1 do
                 local pred = self.output_projector:forward(preds[t])
-                loss = loss + self.criterion:forward(pred, target[t])/batch_size
-                local dl_dpred = self.criterion:backward(pred, target[t])
+                loss = loss + self.criterion:forward(pred, target_eval[t])/batch_size
+                local dl_dpred = self.criterion:backward(pred, target_eval[t])
                 dl_dpred:div(batch_size)
                 local dl_dtarget = self.output_projector:backward(preds[t], dl_dpred)
                 drnn_state_dec[#drnn_state_dec]:add(dl_dtarget)
@@ -316,6 +337,7 @@ function model:step(batch, forward_only)
                     drnn_state_dec[j-self.dec_offset+1]:copy(dlst[j])
                 end
             end
+            local cnn_grad = self.cnn_grad_proto[{{1, batch_size}, {1, source_l}, {}}]
             -- forward directional encoder
             local drnn_state_enc = reset_state(self.init_bwd_enc, batch_size)
             local L = self.encoder_num_layers
@@ -327,9 +349,9 @@ function model:step(batch, forward_only)
                 local dlst = self.encoder_fw_clones[t]:backward(encoder_input, drnn_state_enc)
                 for j = 1, #drnn_state_enc do
                     drnn_state_enc[j]:copy(dlst[j+1])
-                end     
+                end
+                cnn_grad[{{}, t, {}}]:copy(dlst[1])
             end
-            collectgarbage()
             -- backward directional encoder
             local drnn_state_enc = reset_state(self.init_bwd_enc, batch_size)
             local L = self.encoder_num_layers
@@ -342,17 +364,21 @@ function model:step(batch, forward_only)
                 for j = 1, #drnn_state_enc do
                     drnn_state_enc[j]:copy(dlst[j+1])
                 end
+                cnn_grad[{{}, t, {}}]:add(dlst[1])
             end
+            -- cnn
+            self.cnn_model:backward(input_batch, cnn_grad)
+            collectgarbage()
         end
-        return loss, self.grad_params
+        return loss, self.grad_params, {num_nonzeros, accuracy}
     end
     local optim_state = self.optim_state
     if not forward_only then
-        local _, loss = optim.adadelta_list(feval, self.params, optim_state); loss = loss[1]
-        return loss
+        local _, loss, stats = optim.adadelta_list(feval, self.params, optim_state); loss = loss[1]
+        return loss, stats
     else
-        loss, _ = feval(self.params)
-        return loss -- todo: accuracy
+        local loss, _, stats = feval(self.params)
+        return loss, stats -- todo: accuracy
     end
 end
 

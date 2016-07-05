@@ -109,3 +109,51 @@ function str2numlist(label_str)
     table.insert(label_list, 3)
     return label_list
 end
+
+function numlist2str(label_list)
+    local str = {}
+    for i = 1, #label_list do
+        local vocab_id = label_list[i]
+        local l
+        if vocab_id > 12 then
+            l = vocab_id - 1 - 12 + 97
+        else
+            l = vocab_id - 1 - 13 + 48
+        end
+        table.insert(str, l)
+    end
+    label_str = string.char(unpack(str))
+    return label_str 
+end
+
+function evalWordErrRate(labels, target_labels)
+    local batch_size = labels:size()[1]
+    local target_l = labels:size()[2]
+    assert(batch_size == target_labels:size()[1])
+    assert(target_l == target_labels:size()[2])
+
+    local word_error_rate = 0.0
+    for b = 1, batch_size do
+        local label_list = {}
+        for t = 1, target_l do
+            local label = labels[b][t]
+            if label == 3 then
+                break
+            end
+            table.insert(label_list, label)
+        end
+        local target_label_list = {}
+        for t = 1, target_l do
+            local label = target_labels[b][t]
+            if label == 3 then
+                break
+            end
+            table.insert(target_label_list, label)
+        end
+        local label_str = numlist2str(label_list)
+        local target_label_str = numlist2str(target_label_list)
+        local edit_distance = string.levenshtein(label_str, target_label_str)
+        word_error_rate = word_error_rate + edit_distance / string.len(target_label_str) / batch_size
+    end
+    return word_error_rate
+end
