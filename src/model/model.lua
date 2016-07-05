@@ -202,6 +202,9 @@ function model:step(batch, forward_only)
     if not forward_only then
         self.cnn_model:training()
         self.output_projector:training()
+    else
+        self.cnn_model:evaluate()
+        self.output_projector:evaluate()
     end
 
     local feval = function(p) --cut off when evaluate
@@ -216,6 +219,8 @@ function model:step(batch, forward_only)
         for t = 1, source_l do
             if not forward_only then
                 self.encoder_fw_clones[t]:training()
+            else
+                self.encoder_fw_clones[t]:evaluate()
             end
             local encoder_input = {source[t], table.unpack(rnn_state_enc[t-1])}
             local out = self.encoder_fw_clones[t]:forward(encoder_input)
@@ -226,6 +231,8 @@ function model:step(batch, forward_only)
         for t = source_l, 1, -1 do
             if not forward_only then
                 self.encoder_bw_clones[t]:training()
+            else
+                self.encoder_bw_clones[t]:evaluate()
             end
             local encoder_input = {source[t], table.unpack(rnn_state_enc_bwd[t+1])}
             local out = self.encoder_bw_clones[t]:forward(encoder_input)
@@ -251,6 +258,8 @@ function model:step(batch, forward_only)
         for t = 1, target_l do
             if not forward_only then
                 self.decoder_clones[t]:training()
+            else
+                self.decoder_clones[t]:evaluate()
             end
             local decoder_input
             if forward_only and t ~= 1 then
