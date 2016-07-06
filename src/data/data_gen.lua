@@ -18,6 +18,7 @@ function DataGen:__init(data_base_dir, data_path, max_aspect_ratio)
     self.data_path = data_path
     self.max_width = max_width
     self.max_aspect_ratio = max_aspect_ratio
+    self.min_aspect_ratio = 0.5
 
     if logging ~= nil then
         log = function(msg) logging:info(msg) end
@@ -73,6 +74,7 @@ function DataGen:nextBatch(batch_size)
             local origW = img:size()[3]
             local aspect_ratio = origW / origH
             aspect_ratio = math.min(aspect_ratio, self.max_aspect_ratio)
+            aspect_ratio = math.max(aspect_ratio, self.min_aspect_ratio)
             local imgW = math.ceil(aspect_ratio *self.imgH)
             img = image.scale(img, imgW, self.imgH)
             if self.buffer[imgW] == nil then

@@ -303,7 +303,7 @@ function model:step(batch, forward_only)
             local labels = localize(torch.zeros(batch_size, target_l)):fill(1)
             for t = 1, target_l do
                 local pred = self.output_projector:forward(preds[t])
-                loss = loss + self.criterion:forward(pred, target[t])/batch_size
+                loss = loss + self.criterion:forward(pred, target_eval[t])/batch_size
                 local _, indices = torch.max(pred, 2)
                 indices = indices:view(indices:nElement())
                 labels[{{1,batch_size}, t}]:copy(indices)

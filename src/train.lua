@@ -107,17 +107,18 @@ function train(model, phase, batch_size, num_epochs, train_data, val_data, model
                     local val_num_nonzeros = 0
                     local val_accuracy = 0
                     local b = 1
-                    while b < num_batches_val do
+                    while b <= num_batches_val do
                         val_batch = val_data:nextBatch(batch_size)
                         if val_batch == nil then
                             val_data:shuffle()
+                        else
+                            b = b+1
+                            local step_loss, stats = model:step(val_batch, true)
+                            val_loss = val_loss + step_loss
+                            val_num_seen = val_num_seen + 1
+                            val_num_nonzeros = val_num_nonzeros + stats[1]
+                            val_accuracy = val_accuracy + stats[2]
                         end
-                        b = b+1
-                        local step_loss, stats = model:step(val_batch, true)
-                        val_loss = val_loss + step_loss
-                        val_num_seen = val_num_seen + 1
-                        val_num_nonzeros = val_num_nonzeros + stats[1]
-                        val_accuracy = val_accuracy + stats[2]
                     end
                     logging:info(string.format('Step %d - Val Accuracy = %f, Val Perplexity = %f', model.global_step, val_accuracy/val_num_seen, math.exp(val_loss/val_num_nonzeros)))
                     collectgarbage()
