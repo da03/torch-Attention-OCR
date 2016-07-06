@@ -375,10 +375,10 @@ function model:step(batch, forward_only)
     local optim_state = self.optim_state
     if not forward_only then
         local _, loss, stats = optim.adadelta_list(feval, self.params, optim_state); loss = loss[1]
-        return loss, stats
+        return loss*batch_size, stats
     else
         local loss, _, stats = feval(self.params)
-        return loss, stats -- todo: accuracy
+        return loss*batch_size, stats -- todo: accuracy
     end
 end
 
