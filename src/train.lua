@@ -61,16 +61,18 @@ function train(model, phase, batch_size, num_epochs, train_data, val_data, model
     local num_seen = 0
     local num_nonzeros = 0
     local accuracy = 0
+    local forward_only
+    if phase == 'train' then
+        forward_only = false
+    elseif phase == 'test' then
+        forward_only = true
+        num_epochs = 1
+        model.global_step = 0
+    else
+        assert(false, 'phase must be either train or test')
+    end
     for epoch = 1, num_epochs do
         train_data:shuffle()
-        local forward_only
-        if phase == 'train' then
-            forward_only = false
-        elseif phase == 'test' then
-            forward_only = true
-        else
-            assert(false, 'phase must be either train or test')
-        end
         while true do
             train_batch = train_data:nextBatch(batch_size)
             if train_batch == nil then
@@ -123,17 +125,20 @@ function train(model, phase, batch_size, num_epochs, train_data, val_data, model
                         end
                     end
                     logging:info(string.format('Step %d - Val Accuracy = %f, Val Perplexity = %f', model.global_step, val_accuracy/val_num_seen, math.exp(val_loss/val_num_nonzeros)))
+                    num_seen = 0
+                    num_nonzeros = 0
+                    loss = 0
+                    accuracy = 0
                     collectgarbage()
                 end
-                num_seen = 0
-                num_nonzeros = 0
-                loss = 0
-                accuracy = 0
             end
-        end
+        end -- while true
+    end -- for epoch
+    if forward_only then
+        logging:info(string.format('Step %d - Accuracy = %f, Perplexity = %f', model.global_step, accuracy/num_seen, math.exp(loss/num_nonzeros)))
     end
-
 end
+
 function main()
     -- Parse command line 
     opt = cmd:parse(arg)
