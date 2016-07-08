@@ -80,11 +80,13 @@ function train(model, phase, batch_size, num_epochs, train_data, val_data, model
             loss = loss + step_loss
             num_seen = num_seen + 1
             num_nonzeros = num_nonzeros + stats[1]
+            if forward_only then
+                accuracy = accuracy + stats[2]
+            end
             --print (loss/num_seen)
             model.global_step = model.global_step + 1
             if model.global_step % steps_per_checkpoint == 0 then
                 if forward_only then
-                    accuracy = accuracy + stats[2]
                     logging:info(string.format('Step %d - Accuracy = %f, Perplexity = %f', model.global_step, accuracy/num_seen, math.exp(loss/num_nonzeros)))
                 else
                     logging:info(string.format('Step %d - training perplexity = %f', model.global_step, math.exp(loss/num_nonzeros)))
