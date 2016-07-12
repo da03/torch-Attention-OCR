@@ -26,8 +26,9 @@ cmd:option('-log_path', 'log.txt', [[The path to put log]])
 cmd:option('-output_dir', 'results', [[The path to put visualization results if visualize is set to True]])
 
 -- Display
-cmd:option('-steps_per_checkpoint', 100, [[Checkpointing (print perplexity, save model) per how many steps]])
+cmd:option('-steps_per_checkpoint', 10, [[Checkpointing (print perplexity, save model) per how many steps]])
 cmd:option('-num_batches_val', math.huge, [[Number of batches to evaluate.]])
+cmd:option('-beam_size', 5, [[Beam size.]])
 
 -- Optimization
 cmd:text('')
@@ -46,8 +47,8 @@ cmd:option('-decoder_num_layers', 2, [[Number of hidden units in decoder cell]])
 cmd:option('-target_vocab_size', 26+10+3, [[Target vocabulary size. Default is = 26+10+3 # 1: PADDING, 2: GO, 3: EOS, >3: 0-9, a-z]])
 
 -- Other
-cmd:option('-phase', 'train', [[train or test]])
-cmd:option('-gpu_id', 2, [[Which gpu to use. <=0 means use CPU]])
+cmd:option('-phase', 'test', [[train or test]])
+cmd:option('-gpu_id', 1, [[Which gpu to use. <=0 means use CPU]])
 cmd:option('-load_model', false, [[Load model from model-dir or not]])
 cmd:option('-seed', 910820, [[Load model from model-dir or not]])
 cmd:option('-max_decoder_l', 50, [[Maximum number of output targets]]) -- when evaluate, this is the cut-off length.
@@ -56,7 +57,7 @@ cmd:option('-max_encoder_l', 80, [[Maximum length of input feature sequence]]) -
 opt = cmd:parse(arg)
 torch.manualSeed(opt.seed)
 
-function train(model, phase, batch_size, num_epochs, train_data, val_data, model_dir, steps_per_checkpoint, num_batches_val)
+function train(model, phase, batch_size, num_epochs, train_data, val_data, model_dir, steps_per_checkpoint, num_batches_val, beam_size)
     local loss = 0
     local num_seen = 0
     local num_nonzeros = 0
@@ -78,7 +79,7 @@ function train(model, phase, batch_size, num_epochs, train_data, val_data, model
             if train_batch == nil then
                 break
             end
-            local step_loss, stats = model:step(train_batch, forward_only)
+            local step_loss, stats = model:step(train_batch, forward_only, beam_size)
             loss = loss + step_loss
             num_seen = num_seen + 1
             num_nonzeros = num_nonzeros + stats[1]
@@ -89,7 +90,7 @@ function train(model, phase, batch_size, num_epochs, train_data, val_data, model
             model.global_step = model.global_step + 1
             if model.global_step % steps_per_checkpoint == 0 then
                 if forward_only then
-                    logging:info(string.format('Step %d - Accuracy = %f, Perplexity = %f', model.global_step, accuracy/num_seen, math.exp(loss/num_nonzeros)))
+                    logging:info(string.format('Step %d - Accuracy = %f', model.global_step, accuracy/num_seen))
                 else
                     logging:info(string.format('Step %d - training perplexity = %f', model.global_step, math.exp(loss/num_nonzeros)))
                     logging:info('Saving model')
@@ -117,7 +118,7 @@ function train(model, phase, batch_size, num_epochs, train_data, val_data, model
                             val_data:shuffle()
                         else
                             b = b+1
-                            local step_loss, stats = model:step(val_batch, true)
+                            local step_loss, stats = model:step(val_batch, true, beam_size)
                             val_loss = val_loss + step_loss
                             val_num_seen = val_num_seen + 1
                             val_num_nonzeros = val_num_nonzeros + stats[1]
@@ -153,6 +154,7 @@ function main()
     local load_model = opt.load_model
     local steps_per_checkpoint = opt.steps_per_checkpoint
     local num_batches_val = opt.num_batches_val
+    local beam_size = opt.beam_size
 
     local gpu_id = opt.gpu_id
     local seed = opt.seed
@@ -192,7 +194,7 @@ function main()
     local val_data = DataGen(opt.data_base_dir, opt.val_data_path, 10.0)
     logging:info(string.format('Validation data loaded from %s', opt.val_data_path))
 
-    train(model, phase, batch_size, num_epochs, train_data, val_data, model_dir, steps_per_checkpoint, num_batches_val)
+    train(model, phase, batch_size, num_epochs, train_data, val_data, model_dir, steps_per_checkpoint, num_batches_val, beam_size)
 
     logging:shutdown()
 end

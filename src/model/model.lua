@@ -212,6 +212,10 @@ function model:step(batch, forward_only, beam_size)
                 table.insert(self.beam_init_fwd_dec, beam_decoder_h_init:clone()) -- memory cell
                 table.insert(self.beam_init_fwd_dec, beam_decoder_h_init:clone()) -- hidden state
             end
+        else
+            self.beam_scores:zero()
+            self.current_indices_history = {}
+            self.beam_parents_history = {}
         end
     end
     local input_batch = localize(batch[1])
@@ -285,14 +289,22 @@ function model:step(batch, forward_only, beam_size)
                     if not hidden_state:isContiguous() then
                         hidden_state = hidden_state:contiguous()
                     end
-                    return hidden_state:view(batch_size, 1):expand(batch_size, beam_size):view(-1)
+                    local temp_state = hidden_state:view(batch_size, 1):expand(batch_size, beam_size)
+                    if not temp_state:isContiguous() then
+                        temp_state = temp_state:contiguous()
+                    end
+                    return temp_state:view(-1)
                 elseif hidden_state:dim() == 2 then
                     local batch_size = hidden_state:size()[1]
                     local num_hidden = hidden_state:size()[2]
                     if not hidden_state:isContiguous() then
                         hidden_state = hidden_state:contiguous()
                     end
-                    return hidden_state:view(batch_size, 1, num_hidden):expand(batch_size, beam_size, num_hidden):view(batch_size*beam_size, num_hidden)
+                    local temp_state = hidden_state:view(batch_size, 1, num_hidden):expand(batch_size, beam_size, num_hidden)
+                    if not temp_state:isContiguous() then
+                        temp_state = temp_state:contiguous()
+                    end
+                    return temp_state:view(batch_size*beam_size, num_hidden)
                 elseif hidden_state:dim() == 3 then
                     local batch_size = hidden_state:size()[1]
                     local source_l = hidden_state:size()[2]
@@ -300,7 +312,11 @@ function model:step(batch, forward_only, beam_size)
                     if not hidden_state:isContiguous() then
                         hidden_state = hidden_state:contiguous()
                     end
-                    return hidden_state:view(batch_size, 1, source_l, num_hidden):expand(batch_size, beam_size, source_l, num_hidden):view(batch_size*beam_size, source_l, num_hidden)
+                    local temp_state = hidden_state:view(batch_size, 1, source_l, num_hidden):expand(batch_size, beam_size, source_l, num_hidden)
+                    if not temp_state:isContiguous() then
+                        temp_state = temp_state:contiguous()
+                    end
+                    return temp_state:view(batch_size*beam_size, source_l, num_hidden)
                 else
                     assert(false, 'does not support ndim except for 2 and 3')
                 end
@@ -349,26 +365,14 @@ function model:step(batch, forward_only, beam_size)
 
                 if self.input_feed then
                     local top_out = out[#out] -- batch_size*beam_size, hidden_dim
-                    table.insert(next_state, top_out:index(1, beam_parents:view(-1)+localize(torch.range(0,(batch_size-1)*beam_size,beam_size):long()):view(batch_size,1):expand(batch_size,beam_size):view(-1)))
+                    table.insert(next_state, top_out:index(1, beam_parents:view(-1)+localize(torch.range(0,(batch_size-1)*beam_size,beam_size):long()):contiguous():view(batch_size,1):expand(batch_size,beam_size):contiguous():view(-1)))
                 end
                 for j = 1, #out-1 do
                     local out_j = out[j] -- batch_size*beam_size, hidden_dim
-                    table.insert(next_state, out_j:index(1, beam_parents:view(-1)+localize(torch.range(0,(batch_size-1)*beam_size,beam_size):long()):view(batch_size,1):expand(batch_size,beam_size):view(-1)))
+                    table.insert(next_state, out_j:index(1, beam_parents:view(-1)+localize(torch.range(0,(batch_size-1)*beam_size,beam_size):long()):contiguous():view(batch_size,1):expand(batch_size,beam_size):contiguous():view(-1)))
                 end
                 rnn_state_dec[t] = next_state
             end
-            -- final decoding
-            local labels = localize(torch.zeros(batch_size, target_l)):fill(1)
-            local _, indices = torch.max(self.beam_scores, 2) -- batch_size, 1
-            indices = indices:view(-1) -- batch_size
-            local current_indices = self.current_indices_history[#self.current_indices_history]:view(-1):index(1,indices+localize(torch.range(0,(batch_size-1)*beam_size, beam_size):long())) --batch_size
-            for t = target_l, 1, -1 do
-                labels[{{1,batch_size}, t}]:copy(current_indices)
-                indices = self.beam_parents_history[t]:view(-1):index(1,indices+localize(torch.range(0,(batch_size-1)*beam_size, beam_size):long())) --batch_size
-                current_indices = self.current_indices_history[t]:view(-1):index(1,indices+localize(torch.range(0,(batch_size-1)*beam_size, beam_size):long())) --batch_size
-            end
-            accuracy = 1.0 - evalWordErrRate(labels, target_eval_batch)
-            print (accuracy)
         else -- forward_only == false
             -- set decoder states
             local rnn_state_dec = reset_state(self.init_fwd_dec, batch_size, 0)
@@ -409,13 +413,15 @@ function model:step(batch, forward_only, beam_size)
         end
         local loss, accuracy = 0.0, 0.0
         if forward_only then
+            -- final decoding
             local labels = localize(torch.zeros(batch_size, target_l)):fill(1)
-            for t = 1, target_l do
-                local pred = self.output_projector:forward(preds[t])
-                loss = loss + self.criterion:forward(pred, target_eval[t])/batch_size
-                local _, indices = torch.max(pred, 2)
-                indices = indices:view(indices:nElement())
-                labels[{{1,batch_size}, t}]:copy(indices)
+            local _, indices = torch.max(self.beam_scores, 2) -- batch_size, 1
+            indices = indices:view(-1) -- batch_size
+            local current_indices = self.current_indices_history[#self.current_indices_history]:view(-1):index(1,indices+localize(torch.range(0,(batch_size-1)*beam_size, beam_size):long())) --batch_size
+            for t = target_l, 1, -1 do
+                labels[{{1,batch_size}, t}]:copy(current_indices)
+                indices = self.beam_parents_history[t]:view(-1):index(1,indices+localize(torch.range(0,(batch_size-1)*beam_size, beam_size):long())) --batch_size
+                current_indices = self.current_indices_history[t]:view(-1):index(1,indices+localize(torch.range(0,(batch_size-1)*beam_size, beam_size):long())) --batch_size
             end
             accuracy = 1.0 - evalWordErrRate(labels, target_eval_batch)
         else

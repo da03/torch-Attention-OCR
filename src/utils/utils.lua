@@ -157,3 +157,4 @@ function evalWordErrRate(labels, target_labels)
     end
     return word_error_rate
 end
+
