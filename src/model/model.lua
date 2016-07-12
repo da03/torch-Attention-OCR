@@ -191,10 +191,29 @@ function model:_build()
     if self.input_feed then
         self.dec_offset = self.dec_offset + 1
     end
+    self.init_beam = false
 end
 
 -- one step 
-function model:step(batch, forward_only)
+function model:step(batch, forward_only, beam_size)
+    beam_size = beam_size or 1 -- default argmax
+    if forward_only then
+        if not self.init_beam then
+            self.init_beam = true
+            local beam_decoder_h_init = localize(torch.zeros(self.batch_size*beam_size, self.encoder_num_hidden))
+            self.beam_scores = localize(torch.zeros(self.batch_size, beam_size))
+            self.current_indices_history = {}
+            self.beam_parents_history = {}
+            self.beam_init_fwd_dec = {}
+            if self.input_feed then
+                table.insert(self.beam_init_fwd_dec, beam_decoder_h_init:clone())
+            end
+            for L = 1, self.decoder_num_layers do
+                table.insert(self.beam_init_fwd_dec, beam_decoder_h_init:clone()) -- memory cell
+                table.insert(self.beam_init_fwd_dec, beam_decoder_h_init:clone()) -- hidden state
+            end
+        end
+    end
     local input_batch = localize(batch[1])
     local target_batch = localize(batch[2])
     local target_eval_batch = localize(batch[3])
@@ -256,47 +275,113 @@ function model:step(batch, forward_only)
             rnn_state_enc_bwd[t] = out
             context[{{},t, {1+self.encoder_num_hidden, 2*self.encoder_num_hidden}}]:copy(out[#out])
         end
-        -- set decoder states
-        local rnn_state_dec = reset_state(self.init_fwd_dec, batch_size, 0)
-        -- only use encoder final state to initialize the first layer
-        if self.input_feed then
-            rnn_state_dec[0][1*2-1+1]:copy(torch.cat(rnn_state_enc[source_l][1*2-1], rnn_state_enc_bwd[1][1*2-1]))
-            rnn_state_dec[0][1*2+1]:copy(torch.cat(rnn_state_enc[source_l][1*2], rnn_state_enc_bwd[1][1*2]))
-        else
-            rnn_state_dec[0][1*2-1+0]:copy(torch.cat(rnn_state_enc[source_l][1*2-1], rnn_state_enc_bwd[1][1*2-1]))
-            rnn_state_dec[0][1*2+0]:copy(torch.cat(rnn_state_enc[source_l][1*2], rnn_state_enc_bwd[1][1*2]))
-        end
-        for L = 2, self.decoder_num_layers do
-            rnn_state_dec[0][L*2-1+0]:zero()
-            rnn_state_dec[0][L*2+0]:zero()
-        end
         local preds = {}
         local indices
-        for t = 1, target_l do
-            if not forward_only then
-                self.decoder_clones[t]:training()
-            else
-                self.decoder_clones[t]:evaluate()
+        -- forward_only == true, beam search
+        if forward_only then
+            local beam_replicate = function(hidden_state)
+                if hidden_state:dim() == 1 then
+                    local batch_size = hidden_state:size()[1]
+                    return torch.view(hidden_state, batch_size, 1):expand(batch_size, beam_size):view(batch_size*beam_size)
+                elseif hidden_state:dim() == 2 then
+                    local batch_size = hidden_state:size()[1]
+                    local num_hidden = hidden_state:size()[2]
+                    return torch.view(hidden_state, batch_size, 1, num_hidden):expand(batch_size, beam_size, num_hidden):view(batch_size*beam_size, num_hidden)
+                elseif hidden_state:dim() == 3 then
+                    local batch_size = hidden_state:size()[1]
+                    local source_l = hidden_state:size()[2]
+                    local num_hidden = hidden_state:size()[3]
+                    return torch.view(hidden_state, batch_size, 1, source_l, num_hidden):expand(batch_size, beam_size, source_l, num_hidden):view(batch_size*beam_size, source_l, num_hidden)
+                else
+                    assert(false, 'does not support ndim except for 2 and 3')
+                end
             end
-            local decoder_input
-            if forward_only and t ~= 1 then
-                decoder_input = {indices, context, table.unpack(rnn_state_dec[t-1])}
-            else
-                decoder_input = {target[t], context, table.unpack(rnn_state_dec[t-1])}
-            end
-            local out = self.decoder_clones[t]:forward(decoder_input)
-            local next_state = {}
-            table.insert(preds, out[#out])
-            local pred = self.output_projector:forward(preds[t])
-            _, indices = torch.max(pred, 2)
-            indices = indices:view(indices:nElement())
+            local rnn_state_dec = reset_state(self.beam_init_fwd_dec, batch_size*beam_size, 0)
             if self.input_feed then
-                table.insert(next_state, out[#out])
+                rnn_state_dec[0][1*2-1+1]:copy(beam_replicate(torch.cat(rnn_state_enc[source_l][1*2-1], rnn_state_enc_bwd[1][1*2-1])))
+                rnn_state_dec[0][1*2+1]:copy(beam_replicate(torch.cat(rnn_state_enc[source_l][1*2], rnn_state_enc_bwd[1][1*2])))
+            else
+                rnn_state_dec[0][1*2-1+0]:copy(beam_replicate(torch.cat(rnn_state_enc[source_l][1*2-1], rnn_state_enc_bwd[1][1*2-1])))
+                rnn_state_dec[0][1*2+0]:copy(beam_replicate(torch.cat(rnn_state_enc[source_l][1*2], rnn_state_enc_bwd[1][1*2])))
             end
-            for j = 1, #out-1 do
-                table.insert(next_state, out[j])
+            for L = 2, self.decoder_num_layers do
+                rnn_state_dec[0][L*2-1+0]:zero()
+                rnn_state_dec[0][L*2+0]:zero()
             end
-            rnn_state_dec[t] = next_state
+            context = beam_replicate(context)
+            for t = 1, target_l do
+                self.decoder_clones[t]:evaluate()
+                local decoder_input
+                if t ~= 1 then
+                    decoder_input = {indices, context, table.unpack(rnn_state_dec[t-1])}
+                else
+                    decoder_input = {beam_replicate(target[t]), context, table.unpack(rnn_state_dec[t-1])}
+                end
+                local out = self.decoder_clones[t]:forward(decoder_input)
+                local next_state = {}
+                local top_out = out[#out]
+                local probs = self.output_projector:forward(top_out) -- batch_size*beam_size, vocab_size
+                probs[{{}, 1}]:fill(0) -- beam_scores: batch_size, beam_size
+                local total_scores = (probs:view(batch_size, beam_size, self.target_vocab_size) + self.beam_scores:view(batch_size, beam_size, 1):expand(batch_size, beam_size, self.target_vocab_size)):view(batch_size, beam_size*target_vocab_size) -- batch_size, beam_size * target_vocab_size
+                self.beam_scores, raw_indices = total_scores:topk(beam_size, true) --batch_size, beam_size
+                local current_indices = raw_indices:mod(beam_size)+1 -- batch_size, beam_size for current vocab
+                local beam_parents = raw_indices:remainder(beam_size)+1 -- batch_size, beam_size for number of beam in each batch
+                table.insert(self.current_indices_history, current_indices:clone())
+                table.insert(self.beam_parents_history, beam_parents:clone())
+
+                if self.input_feed then
+                    local top_out = out[#out] -- batch_size*beam_size, hidden_dim
+                    table.insert(next_state, top_out:index(1, beam_parents:view(-1)+torch.range(0,batch_size-1):view(batch_size,1):expand(batch_size,beam_size):view(-1)))
+                end
+                for j = 1, #out-1 do
+                    local out_j = out[j] -- batch_size*beam_size, hidden_dim
+                    table.insert(next_state, out_j:index(1, beam_parents:view(-1)+torch.range(0,batch_size-1):view(batch_size,1):expand(batch_size,beam_size):view(-1)))
+                end
+                rnn_state_dec[t] = next_state
+            end
+            -- final decoding
+            local labels = localize(torch.zeros(batch_size, target_l)):fill(1)
+            _, indices = torch.max(self.beam_scores, 
+            for t = target_l, 1, -1 do
+                _, indices = torch.max(pred, 2)
+            end
+        else -- forward_only == false
+            -- set decoder states
+            local rnn_state_dec = reset_state(self.init_fwd_dec, batch_size, 0)
+            -- only use encoder final state to initialize the first layer
+            if self.input_feed then
+                rnn_state_dec[0][1*2-1+1]:copy(torch.cat(rnn_state_enc[source_l][1*2-1], rnn_state_enc_bwd[1][1*2-1]))
+                rnn_state_dec[0][1*2+1]:copy(torch.cat(rnn_state_enc[source_l][1*2], rnn_state_enc_bwd[1][1*2]))
+            else
+                rnn_state_dec[0][1*2-1+0]:copy(torch.cat(rnn_state_enc[source_l][1*2-1], rnn_state_enc_bwd[1][1*2-1]))
+                rnn_state_dec[0][1*2+0]:copy(torch.cat(rnn_state_enc[source_l][1*2], rnn_state_enc_bwd[1][1*2]))
+            end
+            for L = 2, self.decoder_num_layers do
+                rnn_state_dec[0][L*2-1+0]:zero()
+                rnn_state_dec[0][L*2+0]:zero()
+            end
+            for t = 1, target_l do
+                self.decoder_clones[t]:training()
+                local decoder_input
+                if forward_only and t ~= 1 then
+                    decoder_input = {indices, context, table.unpack(rnn_state_dec[t-1])}
+                else
+                    decoder_input = {target[t], context, table.unpack(rnn_state_dec[t-1])}
+                end
+                local out = self.decoder_clones[t]:forward(decoder_input)
+                local next_state = {}
+                table.insert(preds, out[#out])
+                local pred = self.output_projector:forward(preds[t])
+                _, indices = torch.max(pred, 2)
+                indices = indices:view(indices:nElement())
+                if self.input_feed then
+                    table.insert(next_state, out[#out])
+                end
+                for j = 1, #out-1 do
+                    table.insert(next_state, out[j])
+                end
+                rnn_state_dec[t] = next_state
+            end
         end
         local loss, accuracy = 0.0, 0.0
         if forward_only then
