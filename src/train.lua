@@ -19,16 +19,16 @@ cmd:text('')
 cmd:text('**Input and Output**')
 cmd:text('')
 cmd:option('-data_base_dir', '/n/rush_lab/data/image_data/90kDICT32px', [[The base directory of the image path in data-path. If the image path in data-path is absolute path, set it to /]])
-cmd:option('-data_path', '/n/rush_lab/data/image_data/val_shuffled_words.txt.small', [[The path containing data file names and labels. Format per line: image_path characters]])
+cmd:option('-data_path', '/n/rush_lab/data/image_data/train_shuffled_words.txt', [[The path containing data file names and labels. Format per line: image_path characters]])
 cmd:option('-val_data_path', '/n/rush_lab/data/image_data/val_shuffled_words.txt', [[The path containing validate data file names and labels. Format per line: image_path characters]])
 cmd:option('-model_dir', 'train', [[The directory for saving and loading model parameters (structure is not stored)]])
 cmd:option('-log_path', 'log.txt', [[The path to put log]])
 cmd:option('-output_dir', 'results', [[The path to put visualization results if visualize is set to True]])
 
 -- Display
-cmd:option('-steps_per_checkpoint', 10, [[Checkpointing (print perplexity, save model) per how many steps]])
+cmd:option('-steps_per_checkpoint', 100, [[Checkpointing (print perplexity, save model) per how many steps]])
 cmd:option('-num_batches_val', math.huge, [[Number of batches to evaluate.]])
-cmd:option('-beam_size', 5, [[Beam size.]])
+cmd:option('-beam_size', 1, [[Beam size.]])
 
 -- Optimization
 cmd:text('')
@@ -116,7 +116,7 @@ function train(model, phase, batch_size, num_epochs, train_data, val_data, model
                     -- Evaluate on val data
                     logging:info(string.format('Evaluating model on %s batches of validation data', num_batches_val))
                     local val_loss = 0
-                    local val_num_seen = 0
+                    local val_num_samples = 0
                     local val_num_nonzeros = 0
                     local val_accuracy = 0
                     local b = 1
@@ -125,15 +125,16 @@ function train(model, phase, batch_size, num_epochs, train_data, val_data, model
                         if val_batch == nil then
                             val_data:shuffle()
                         else
+                            local real_batch_size = train_batch[1]:size()[1]
                             b = b+1
                             local step_loss, stats = model:step(val_batch, true, beam_size)
                             val_loss = val_loss + step_loss
-                            val_num_seen = val_num_seen + 1
+                            val_num_samples = val_num_samples + real_batch_size
                             val_num_nonzeros = val_num_nonzeros + stats[1]
                             val_accuracy = val_accuracy + stats[2]
                         end
                     end
-                    logging:info(string.format('Step %d - Val Accuracy = %f, Val Perplexity = %f', model.global_step, val_accuracy/val_num_seen, math.exp(val_loss/val_num_nonzeros)))
+                    logging:info(string.format('Step %d - Val Accuracy = %f', model.global_step, val_accuracy/val_num_samples))
                     num_seen = 0
                     num_nonzeros = 0
                     loss = 0

@@ -76,7 +76,7 @@ function DataGen:nextBatch(batch_size)
             aspect_ratio = math.min(aspect_ratio, self.max_aspect_ratio)
             aspect_ratio = math.max(aspect_ratio, self.min_aspect_ratio)
             local imgW = math.ceil(aspect_ratio *self.imgH)
-            --imgW = 100
+            imgW = 100
             img = image.scale(img, imgW, self.imgH)
             if self.buffer[imgW] == nil then
                 self.buffer[imgW] = {}

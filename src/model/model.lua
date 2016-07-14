@@ -59,7 +59,6 @@ function model:load(model_path, config)
     self.global_step = checkpoint[3]
     self.optim_state = checkpoint[4]
 
-    print(model_config)
     -- Load model structure parameters
     self.cnn_feature_size = 512
     self.dropout = model_config.dropout
@@ -69,7 +68,7 @@ function model:load(model_path, config)
     self.decoder_num_layers = model_config.decoder_num_layers
     self.target_vocab_size = model_config.target_vocab_size
     self.target_embedding_size = model_config.target_embedding_size
-    self.input_feed = config.input_feed
+    self.input_feed = model_config.input_feed
 
     self.max_encoder_l = config.max_encoder_l or model_config.max_encoder_l
     self.max_decoder_l = config.max_decoder_l or model_config.max_decoder_l
@@ -282,6 +281,7 @@ function model:step(batch, forward_only, beam_size)
         end
         local preds = {}
         local indices
+        local rnn_state_dec
         -- forward_only == true, beam search
         if forward_only then
             local beam_replicate = function(hidden_state)
@@ -322,7 +322,7 @@ function model:step(batch, forward_only, beam_size)
                     assert(false, 'does not support ndim except for 2 and 3')
                 end
             end
-            local rnn_state_dec = reset_state(self.beam_init_fwd_dec, batch_size, 0)
+            rnn_state_dec = reset_state(self.beam_init_fwd_dec, batch_size, 0)
             if self.input_feed then
                 rnn_state_dec[0][1*2-1+1]:copy((torch.cat(rnn_state_enc[source_l][1*2-1], rnn_state_enc_bwd[1][1*2-1])))
                 rnn_state_dec[0][1*2+1]:copy((torch.cat(rnn_state_enc[source_l][1*2], rnn_state_enc_bwd[1][1*2])))
@@ -390,7 +390,7 @@ function model:step(batch, forward_only, beam_size)
             end
         else -- forward_only == false
             -- set decoder states
-            local rnn_state_dec = reset_state(self.init_fwd_dec, batch_size, 0)
+            rnn_state_dec = reset_state(self.init_fwd_dec, batch_size, 0)
             -- only use encoder final state to initialize the first layer
             if self.input_feed then
                 rnn_state_dec[0][1*2-1+1]:copy(torch.cat(rnn_state_enc[source_l][1*2-1], rnn_state_enc_bwd[1][1*2-1]))
@@ -406,11 +406,7 @@ function model:step(batch, forward_only, beam_size)
             for t = 1, target_l do
                 self.decoder_clones[t]:training()
                 local decoder_input
-                if forward_only and t ~= 1 then
-                    decoder_input = {indices, context, table.unpack(rnn_state_dec[t-1])}
-                else
-                    decoder_input = {target[t], context, table.unpack(rnn_state_dec[t-1])}
-                end
+                decoder_input = {target[t], context, table.unpack(rnn_state_dec[t-1])}
                 local out = self.decoder_clones[t]:forward(decoder_input)
                 local next_state = {}
                 table.insert(preds, out[#out])
