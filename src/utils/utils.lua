@@ -153,7 +153,10 @@ function evalWordErrRate(labels, target_labels)
         local label_str = numlist2str(label_list)
         local target_label_str = numlist2str(target_label_list)
         local edit_distance = string.levenshtein(label_str, target_label_str)
-        word_error_rate = word_error_rate + math.min(1,edit_distance / string.len(target_label_str))
+        if edit_distance ~= 0 then
+            word_error_rate = word_error_rate + 1
+        end
+        --word_error_rate = word_error_rate + math.min(1,edit_distance / string.len(target_label_str))
     end
     return word_error_rate
 end
