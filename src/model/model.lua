@@ -196,8 +196,9 @@ end
 
 -- one step 
 function model:step(batch, forward_only, beam_size)
-    beam_size = beam_size or 1 -- default argmax
     if forward_only then
+        beam_size = beam_size or 1 -- default argmax
+        beam_size = math.min(beam_size, self.target_vocab_size)
         if not self.init_beam then
             self.init_beam = true
             local beam_decoder_h_init = localize(torch.zeros(self.batch_size*beam_size, self.decoder_num_hidden))
@@ -321,13 +322,13 @@ function model:step(batch, forward_only, beam_size)
                     assert(false, 'does not support ndim except for 2 and 3')
                 end
             end
-            local rnn_state_dec = reset_state(self.beam_init_fwd_dec, batch_size*beam_size, 0)
+            local rnn_state_dec = reset_state(self.beam_init_fwd_dec, batch_size, 0)
             if self.input_feed then
-                rnn_state_dec[0][1*2-1+1]:copy(beam_replicate(torch.cat(rnn_state_enc[source_l][1*2-1], rnn_state_enc_bwd[1][1*2-1])))
-                rnn_state_dec[0][1*2+1]:copy(beam_replicate(torch.cat(rnn_state_enc[source_l][1*2], rnn_state_enc_bwd[1][1*2])))
+                rnn_state_dec[0][1*2-1+1]:copy((torch.cat(rnn_state_enc[source_l][1*2-1], rnn_state_enc_bwd[1][1*2-1])))
+                rnn_state_dec[0][1*2+1]:copy((torch.cat(rnn_state_enc[source_l][1*2], rnn_state_enc_bwd[1][1*2])))
             else
-                rnn_state_dec[0][1*2-1+0]:copy(beam_replicate(torch.cat(rnn_state_enc[source_l][1*2-1], rnn_state_enc_bwd[1][1*2-1])))
-                rnn_state_dec[0][1*2+0]:copy(beam_replicate(torch.cat(rnn_state_enc[source_l][1*2], rnn_state_enc_bwd[1][1*2])))
+                rnn_state_dec[0][1*2-1+0]:copy((torch.cat(rnn_state_enc[source_l][1*2-1], rnn_state_enc_bwd[1][1*2-1])))
+                rnn_state_dec[0][1*2+0]:copy((torch.cat(rnn_state_enc[source_l][1*2], rnn_state_enc_bwd[1][1*2])))
             end
             for L = 2, self.decoder_num_layers do
                 rnn_state_dec[0][L*2-1+0]:zero()
@@ -339,24 +340,32 @@ function model:step(batch, forward_only, beam_size)
             for t = 1, target_l do
                 self.decoder_clones[t]:evaluate()
                 if t == 1 then
-                    beam_input = beam_replicate(target[t])
+                    beam_input = target[t]
+                    decoder_input = {beam_input, context, table.unpack(rnn_state_dec[t-1])}
+                else
+                    decoder_input = {beam_input, beam_context, table.unpack(rnn_state_dec[t-1])}
                 end
-                decoder_input = {beam_input, beam_context, table.unpack(rnn_state_dec[t-1])}
                 local out = self.decoder_clones[t]:forward(decoder_input)
                 local next_state = {}
                 local top_out = out[#out]
-                local probs = self.output_projector:forward(top_out) -- batch_size*beam_size, vocab_size
-                probs:select(2,1):maskedFill(beam_input:eq(1), 0) -- once padding or EOS encountered, stuck at that point
-                probs:select(2,1):maskedFill(beam_input:eq(3), 0)
-                local total_scores = (probs:view(batch_size, beam_size, self.target_vocab_size) + self.beam_scores:view(batch_size, beam_size, 1):expand(batch_size, beam_size, self.target_vocab_size)):view(batch_size, beam_size*self.target_vocab_size) -- batch_size, beam_size * target_vocab_size
-                self.beam_scores, raw_indices = total_scores:topk(beam_size, true) --batch_size, beam_size
-                raw_indices:add(-1)
-                local current_indices
+                local probs = self.output_projector:forward(top_out) -- t~=0, batch_size*beam_size, vocab_size; t=0, batch_size,vocab_size
+                local current_indices, raw_indices
                 local beam_parents
-                if use_cuda then
-                    current_indices = raw_indices:double():fmod(self.target_vocab_size):cuda()+1 -- batch_size, beam_size for current vocab
+                if t == 1 then
+                    -- probs batch_size, vocab_size
+                    self.beam_scores, raw_indices = probs:topk(beam_size, true)
+                    current_indices = raw_indices
                 else
-                    current_indices = raw_indices:fmod(self.target_vocab_size)+1 -- batch_size, beam_size for current vocab
+                    probs:select(2,1):maskedFill(beam_input:eq(1), 0) -- once padding or EOS encountered, stuck at that point
+                    probs:select(2,1):maskedFill(beam_input:eq(3), 0)
+                    local total_scores = (probs:view(batch_size, beam_size, self.target_vocab_size) + self.beam_scores:view(batch_size, beam_size, 1):expand(batch_size, beam_size, self.target_vocab_size)):view(batch_size, beam_size*self.target_vocab_size) -- batch_size, beam_size * target_vocab_size
+                    self.beam_scores, raw_indices = total_scores:topk(beam_size, true) --batch_size, beam_size
+                    raw_indices:add(-1)
+                    if use_cuda then
+                        current_indices = raw_indices:double():fmod(self.target_vocab_size):cuda()+1 -- batch_size, beam_size for current vocab
+                    else
+                        current_indices = raw_indices:fmod(self.target_vocab_size)+1 -- batch_size, beam_size for current vocab
+                    end
                 end
                 beam_parents = (raw_indices / self.target_vocab_size):floor()+1 -- batch_size, beam_size for number of beam in each batch
                 beam_input = current_indices:view(batch_size*beam_size)
@@ -365,10 +374,16 @@ function model:step(batch, forward_only, beam_size)
 
                 if self.input_feed then
                     local top_out = out[#out] -- batch_size*beam_size, hidden_dim
+                    if t == 1 then
+                        top_out = beam_replicate(top_out)
+                    end
                     table.insert(next_state, top_out:index(1, beam_parents:view(-1)+localize(torch.range(0,(batch_size-1)*beam_size,beam_size):long()):contiguous():view(batch_size,1):expand(batch_size,beam_size):contiguous():view(-1)))
                 end
                 for j = 1, #out-1 do
                     local out_j = out[j] -- batch_size*beam_size, hidden_dim
+                    if t == 1 then
+                        out_j = beam_replicate(out_j)
+                    end
                     table.insert(next_state, out_j:index(1, beam_parents:view(-1)+localize(torch.range(0,(batch_size-1)*beam_size,beam_size):long()):contiguous():view(batch_size,1):expand(batch_size,beam_size):contiguous():view(-1)))
                 end
                 rnn_state_dec[t] = next_state
@@ -421,9 +436,11 @@ function model:step(batch, forward_only, beam_size)
             for t = target_l, 1, -1 do
                 labels[{{1,batch_size}, t}]:copy(current_indices)
                 indices = self.beam_parents_history[t]:view(-1):index(1,indices+localize(torch.range(0,(batch_size-1)*beam_size, beam_size):long())) --batch_size
-                current_indices = self.current_indices_history[t]:view(-1):index(1,indices+localize(torch.range(0,(batch_size-1)*beam_size, beam_size):long())) --batch_size
+                if t > 1 then
+                    current_indices = self.current_indices_history[t-1]:view(-1):index(1,indices+localize(torch.range(0,(batch_size-1)*beam_size, beam_size):long())) --batch_size
+                end
             end
-            accuracy = 1.0 - evalWordErrRate(labels, target_eval_batch)
+            accuracy = batch_size - evalWordErrRate(labels, target_eval_batch)
         else
             local encoder_fw_grads = self.encoder_fw_grad_proto[{{1, batch_size}, {1, source_l}}]
             local encoder_bw_grads = self.encoder_bw_grad_proto[{{1, batch_size}, {1, source_l}}]

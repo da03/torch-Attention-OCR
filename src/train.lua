@@ -19,7 +19,7 @@ cmd:text('')
 cmd:text('**Input and Output**')
 cmd:text('')
 cmd:option('-data_base_dir', '/n/rush_lab/data/image_data/90kDICT32px', [[The base directory of the image path in data-path. If the image path in data-path is absolute path, set it to /]])
-cmd:option('-data_path', '/n/rush_lab/data/image_data/train_shuffled_words.txt', [[The path containing data file names and labels. Format per line: image_path characters]])
+cmd:option('-data_path', '/n/rush_lab/data/image_data/val_shuffled_words.txt.small', [[The path containing data file names and labels. Format per line: image_path characters]])
 cmd:option('-val_data_path', '/n/rush_lab/data/image_data/val_shuffled_words.txt', [[The path containing validate data file names and labels. Format per line: image_path characters]])
 cmd:option('-model_dir', 'train', [[The directory for saving and loading model parameters (structure is not stored)]])
 cmd:option('-log_path', 'log.txt', [[The path to put log]])
@@ -60,6 +60,7 @@ torch.manualSeed(opt.seed)
 function train(model, phase, batch_size, num_epochs, train_data, val_data, model_dir, steps_per_checkpoint, num_batches_val, beam_size)
     local loss = 0
     local num_seen = 0
+    local num_samples = 0
     local num_nonzeros = 0
     local accuracy = 0
     local forward_only
@@ -73,24 +74,31 @@ function train(model, phase, batch_size, num_epochs, train_data, val_data, model
         assert(false, 'phase must be either train or test')
     end
     for epoch = 1, num_epochs do
-        train_data:shuffle()
+        if not forward_only then
+            train_data:shuffle()
+        end
         while true do
             train_batch = train_data:nextBatch(batch_size)
             if train_batch == nil then
                 break
             end
+            local real_batch_size = train_batch[1]:size()[1]
             local step_loss, stats = model:step(train_batch, forward_only, beam_size)
-            loss = loss + step_loss
             num_seen = num_seen + 1
+            num_samples = num_samples + real_batch_size
             num_nonzeros = num_nonzeros + stats[1]
             if forward_only then
+                --print (train_batch[1]:size(4))
                 accuracy = accuracy + stats[2]
+                --print (stats[2]/real_batch_size)
+            else
+                loss = loss + step_loss
             end
             --print (loss/num_seen)
             model.global_step = model.global_step + 1
             if model.global_step % steps_per_checkpoint == 0 then
                 if forward_only then
-                    logging:info(string.format('Step %d - Accuracy = %f', model.global_step, accuracy/num_seen))
+                    logging:info(string.format('Number of samples %d - Accuracy = %f', num_samples, accuracy/num_samples))
                 else
                     logging:info(string.format('Step %d - training perplexity = %f', model.global_step, math.exp(loss/num_nonzeros)))
                     logging:info('Saving model')
@@ -134,10 +142,10 @@ function train(model, phase, batch_size, num_epochs, train_data, val_data, model
                 end
             end
         end -- while true
+        if forward_only then
+            logging:info(string.format('Epoch: %d Number of samples %d - Accuracy = %f', epoch, num_samples, accuracy/num_samples))
+        end
     end -- for epoch
-    if forward_only then
-        logging:info(string.format('Step %d - Accuracy = %f, Perplexity = %f', model.global_step, accuracy/num_seen, math.exp(loss/num_nonzeros)))
-    end
 end
 
 function main()

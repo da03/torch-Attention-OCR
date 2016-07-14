@@ -76,6 +76,7 @@ function DataGen:nextBatch(batch_size)
             aspect_ratio = math.min(aspect_ratio, self.max_aspect_ratio)
             aspect_ratio = math.max(aspect_ratio, self.min_aspect_ratio)
             local imgW = math.ceil(aspect_ratio *self.imgH)
+            --imgW = 100
             img = image.scale(img, imgW, self.imgH)
             if self.buffer[imgW] == nil then
                 self.buffer[imgW] = {}
@@ -120,13 +121,17 @@ function DataGen:nextBatch(batch_size)
         images[i]:copy(self.buffer[imgW][i][1])
         max_target_length = math.max(max_target_length, #self.buffer[imgW][i][2])
     end
-    local targets = torch.IntTensor(batch_size, max_target_length):fill(0)
+    local targets = torch.IntTensor(real_batch_size, max_target_length-1):fill(0)
+    local targets_eval = torch.IntTensor(real_batch_size, max_target_length-1):fill(1)
+    local num_nonzeros = 0
     for i = 1, #self.buffer[imgW] do
-        for j = 1, #self.buffer[imgW][i][2] do
+        num_nonzeros = num_nonzeros + #self.buffer[imgW][i][2] - 1
+        for j = 1, #self.buffer[imgW][i][2]-1 do
             targets[i][j] = self.buffer[imgW][i][2][j] 
+            targets_eval[i][j] = self.buffer[imgW][i][2][j+1] 
         end
     end
     self.buffer[imgW] = nil
     --collectgarbage()
-    return {images, targets}
+    return {images, targets, targets_eval, num_nonzeros}
 end
