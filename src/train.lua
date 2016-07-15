@@ -26,7 +26,7 @@ cmd:option('-log_path', 'log.txt', [[The path to put log]])
 cmd:option('-output_dir', 'results', [[The path to put visualization results if visualize is set to True]])
 
 -- Display
-cmd:option('-steps_per_checkpoint', 100, [[Checkpointing (print perplexity, save model) per how many steps]])
+cmd:option('-steps_per_checkpoint', 400, [[Checkpointing (print perplexity, save model) per how many steps]])
 cmd:option('-num_batches_val', math.huge, [[Number of batches to evaluate.]])
 cmd:option('-beam_size', 1, [[Beam size.]])
 
@@ -75,6 +75,7 @@ function train(model, phase, batch_size, num_epochs, train_data, val_data, model
     end
     for epoch = 1, num_epochs do
         if not forward_only then
+            train_data:shuffle()
             train_data:shuffle()
         end
         while true do
@@ -185,7 +186,7 @@ function main()
     local model = Model()
     local final_model = paths.concat(model_dir, 'final-model')
     if load_model and paths.filep(final_model) then
-        logging:info('Loading model from %s', final_model)
+        logging:info(string.format('Loading model from %s', final_model))
         model:load(final_model, opt)
     else
         logging:info('Creating model with fresh parameters')
@@ -196,12 +197,16 @@ function main()
     end
 
     -- Load data
+    logging:info(string.format('Data base dir %s', opt.data_base_dir))
     logging:info(string.format('Load training data from %s', opt.data_path))
     local train_data = DataGen(opt.data_base_dir, opt.data_path, 10.0)
     logging:info(string.format('Training data loaded from %s', opt.data_path))
-    logging:info(string.format('Load validation data from %s', opt.val_data_path))
-    local val_data = DataGen(opt.data_base_dir, opt.val_data_path, 10.0)
-    logging:info(string.format('Validation data loaded from %s', opt.val_data_path))
+    local val_data
+    if phase == 'train' then
+        logging:info(string.format('Load validation data from %s', opt.val_data_path))
+        val_data = DataGen(opt.data_base_dir, opt.val_data_path, 10.0)
+        logging:info(string.format('Validation data loaded from %s', opt.val_data_path))
+    end
 
     train(model, phase, batch_size, num_epochs, train_data, val_data, model_dir, steps_per_checkpoint, num_batches_val, beam_size)
 
