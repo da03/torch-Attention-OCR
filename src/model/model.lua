@@ -143,10 +143,6 @@ function model:_build()
     end
     localize(self.criterion)
 
-    self.decoder_clones = clone_many_times(self.decoder, self.max_decoder_l)
-    self.encoder_fw_clones = clone_many_times(self.encoder_fw, self.max_encoder_l)
-    self.encoder_bw_clones = clone_many_times(self.encoder_bw, self.max_encoder_l)
-
     self.context_proto = localize(torch.zeros(self.batch_size, self.max_encoder_l, 2*self.encoder_num_hidden))
     self.encoder_fw_grad_proto = localize(torch.zeros(self.batch_size, self.max_encoder_l, self.encoder_num_hidden))
     self.encoder_bw_grad_proto = localize(torch.zeros(self.batch_size, self.max_encoder_l, self.encoder_num_hidden))
@@ -161,6 +157,10 @@ function model:_build()
         self.grad_params[i] = gp
     end
     log(string.format('Number of parameters: %d', num_params))
+
+    self.decoder_clones = clone_many_times(self.decoder, self.max_decoder_l)
+    self.encoder_fw_clones = clone_many_times(self.encoder_fw, self.max_encoder_l)
+    self.encoder_bw_clones = clone_many_times(self.encoder_bw, self.max_encoder_l)
 
     -- initalial states
     local encoder_h_init = localize(torch.zeros(self.batch_size, self.encoder_num_hidden))
