@@ -126,13 +126,15 @@ function numlist2str(label_list)
     return label_str 
 end
 
-function evalWordErrRate(labels, target_labels)
+function evalWordErrRate(labels, target_labels, visualize)
     local batch_size = labels:size()[1]
     local target_l = labels:size()[2]
     assert(batch_size == target_labels:size()[1])
     assert(target_l == target_labels:size()[2])
 
     local word_error_rate = 0.0
+    local labels_pred = {}
+    local labels_gold = {}
     for b = 1, batch_size do
         local label_list = {}
         for t = 1, target_l do
@@ -152,12 +154,16 @@ function evalWordErrRate(labels, target_labels)
         end
         local label_str = numlist2str(label_list)
         local target_label_str = numlist2str(target_label_list)
+        if visualize then
+            table.insert(labels_pred, label_str)
+            table.insert(labels_gold, target_label_str)
+        end
         local edit_distance = string.levenshtein(label_str, target_label_str)
         if edit_distance ~= 0 then
             word_error_rate = word_error_rate + 1
         end
         --word_error_rate = word_error_rate + math.min(1,edit_distance / string.len(target_label_str))
     end
-    return word_error_rate
+    return word_error_rate, labels_pred, labels_gole
 end
 

@@ -191,6 +191,7 @@ function model:_build()
         self.dec_offset = self.dec_offset + 1
     end
     self.init_beam = false
+    self.visualize = false
 end
 
 -- one step 
@@ -222,6 +223,10 @@ function model:step(batch, forward_only, beam_size)
     local target_batch = localize(batch[2])
     local target_eval_batch = localize(batch[3])
     local num_nonzeros = batch[4]
+    local img_paths
+    if self.visualize then
+        img_paths = batch[5]
+    end
 
     local batch_size = input_batch:size()[1]
     local target_l = target_batch:size()[2]
@@ -438,7 +443,14 @@ function model:step(batch, forward_only, beam_size)
                     current_indices = self.current_indices_history[t-1]:view(-1):index(1,indices+localize(torch.range(0,(batch_size-1)*beam_size, beam_size):long())) --batch_size
                 end
             end
-            accuracy = batch_size - evalWordErrRate(labels, target_eval_batch)
+            local word_err, labels_pred, labels_gold = evalWordErrRate(labels, target_eval_batch, self.visualize)
+            accuracy = batch_size - word_err
+            if self.visualize then
+                for i = 1, #img_paths do
+                    self.visualize_file:write(string.format('%s\t%s\t%s\n', img_paths[i], labels_gold[i], labels_pred[i]))
+                end
+                self.visualize_file:flush()
+            end
         else
             local encoder_fw_grads = self.encoder_fw_grad_proto[{{1, batch_size}, {1, source_l}}]
             local encoder_bw_grads = self.encoder_bw_grad_proto[{{1, batch_size}, {1, source_l}}]
@@ -511,11 +523,28 @@ function model:step(batch, forward_only, beam_size)
         return loss*batch_size, stats -- todo: accuracy
     end
 end
-
+-- Set visualize phase
+function model:vis(output_dir)
+    self.visualize = true
+    self.visualize_path = paths.concat(output_dir, 'results.txt')
+    local file, err = io.open(self.visualize_path, "w")
+    self.visualize_file = file
+    if err then 
+        log(string.format('Error: visualize file %s cannot be created', self.visualize_path))
+        self.visualize  = false
+        self.visualize_file = nil
+    end
+end
 -- Save model to model_path
 function model:save(model_path)
     for i = 1, #self.layers do
         self.layers[i]:clearState()
     end
     torch.save(model_path, {{self.cnn_model, self.encoder_fw, self.encoder_bw, self.decoder, self.output_projector}, self.config, self.global_step, self.optim_state})
+end
+
+function model:shutdown()
+    if self.visualize_file then
+        self.visualize_file:close()
+    end
 end

@@ -62,7 +62,8 @@ function DataGen:nextBatch(batch_size)
         if self.cursor > #self.lines then
             break
         end
-        local status, img = pcall(image.load, paths.concat(self.data_base_dir, self.lines[self.cursor][1]))
+        local img_path = self.lines[self.cursor][1]
+        local status, img = pcall(image.load, paths.concat(self.data_base_dir, img_path))
         if not status then
             self.cursor = self.cursor + 1
         else
@@ -81,11 +82,14 @@ function DataGen:nextBatch(batch_size)
             if self.buffer[imgW] == nil then
                 self.buffer[imgW] = {}
             end
-            table.insert(self.buffer[imgW], {img:clone(), label_list})
+            table.insert(self.buffer[imgW], {img:clone(), label_list, img_path})
             if #self.buffer[imgW] == batch_size then
                 local images = torch.Tensor(batch_size, 1, self.imgH, imgW)
                 local max_target_length = -math.huge
+                -- visualize
+                local img_paths = {}
                 for i = 1, #self.buffer[imgW] do
+                    img_paths[i] = self.buffer[imgW][i][3]
                     images[i]:copy(self.buffer[imgW][i][1])
                     max_target_length = math.max(max_target_length, #self.buffer[imgW][i][2])
                 end
@@ -103,7 +107,7 @@ function DataGen:nextBatch(batch_size)
                 end
                 self.buffer[imgW] = nil
                 --collectgarbage()
-                do return {images, targets, targets_eval, num_nonzeros} end
+                do return {images, targets, targets_eval, num_nonzeros, img_paths} end
             end
         end
     end
@@ -117,7 +121,10 @@ function DataGen:nextBatch(batch_size)
     real_batch_size = #self.buffer[imgW]
     local images = torch.Tensor(real_batch_size, 1, self.imgH, imgW)
     local max_target_length = -math.huge
+    -- visualize
+    local img_paths = {}
     for i = 1, #self.buffer[imgW] do
+        img_paths[i] = self.buffer[imgW][i][3]
         images[i]:copy(self.buffer[imgW][i][1])
         max_target_length = math.max(max_target_length, #self.buffer[imgW][i][2])
     end
@@ -133,5 +140,5 @@ function DataGen:nextBatch(batch_size)
     end
     self.buffer[imgW] = nil
     --collectgarbage()
-    return {images, targets, targets_eval, num_nonzeros}
+    return {images, targets, targets_eval, num_nonzeros, img_paths}
 end

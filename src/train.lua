@@ -50,6 +50,7 @@ cmd:option('-target_vocab_size', 26+10+3, [[Target vocabulary size. Default is =
 cmd:option('-phase', 'test', [[train or test]])
 cmd:option('-gpu_id', 1, [[Which gpu to use. <=0 means use CPU]])
 cmd:option('-load_model', false, [[Load model from model-dir or not]])
+cmd:option('-visualize', false, [[Print results or not]])
 cmd:option('-seed', 910820, [[Load model from model-dir or not]])
 cmd:option('-max_decoder_l', 50, [[Maximum number of output targets]]) -- when evaluate, this is the cut-off length.
 cmd:option('-max_encoder_l', 80, [[Maximum length of input feature sequence]]) --320*10/4-1
@@ -57,7 +58,7 @@ cmd:option('-max_encoder_l', 80, [[Maximum length of input feature sequence]]) -
 opt = cmd:parse(arg)
 torch.manualSeed(opt.seed)
 
-function train(model, phase, batch_size, num_epochs, train_data, val_data, model_dir, steps_per_checkpoint, num_batches_val, beam_size)
+function train(model, phase, batch_size, num_epochs, train_data, val_data, model_dir, steps_per_checkpoint, num_batches_val, beam_size, visualize, output_dir)
     local loss = 0
     local num_seen = 0
     local num_samples = 0
@@ -67,6 +68,9 @@ function train(model, phase, batch_size, num_epochs, train_data, val_data, model
     if phase == 'train' then
         forward_only = false
     elseif phase == 'test' then
+        if visualize then
+            model:vis(output_dir)
+        end
         forward_only = true
         num_epochs = 1
         model.global_step = 0
@@ -171,6 +175,8 @@ function main()
     local gpu_id = opt.gpu_id
     local seed = opt.seed
 
+    local visualize = opt.visualize
+    local output_dir = opt.output_dir
     if gpu_id > 0 then
         logging:info(string.format('Using CUDA on GPU %d', gpu_id))
         require 'cutorch'
@@ -198,6 +204,11 @@ function main()
         paths.mkdir(model_dir)
     end
 
+    if visualize then
+        if not paths.dirp(output_dir) then
+            paths.mkdir(output_dir)
+        end
+    end
     -- Load data
     logging:info(string.format('Data base dir %s', opt.data_base_dir))
     logging:info(string.format('Load training data from %s', opt.data_path))
@@ -210,9 +221,10 @@ function main()
         logging:info(string.format('Validation data loaded from %s', opt.val_data_path))
     end
 
-    train(model, phase, batch_size, num_epochs, train_data, val_data, model_dir, steps_per_checkpoint, num_batches_val, beam_size)
+    train(model, phase, batch_size, num_epochs, train_data, val_data, model_dir, steps_per_checkpoint, num_batches_val, beam_size, visualize, output_dir)
 
     logging:shutdown()
+    model:shutdown()
 end
 
 main()
