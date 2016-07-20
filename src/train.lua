@@ -77,6 +77,8 @@ function train(model, phase, batch_size, num_epochs, train_data, val_data, model
         if not forward_only then
             train_data:shuffle()
             train_data:shuffle()
+            train_data:shuffle()
+            train_data:shuffle()
         end
         while true do
             train_batch = train_data:nextBatch(batch_size)

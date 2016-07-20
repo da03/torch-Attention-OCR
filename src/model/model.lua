@@ -323,12 +323,13 @@ function model:step(batch, forward_only, beam_size)
                 end
             end
             rnn_state_dec = reset_state(self.beam_init_fwd_dec, batch_size, 0)
+            local L = self.encoder_num_layers
             if self.input_feed then
-                rnn_state_dec[0][1*2-1+1]:copy((torch.cat(rnn_state_enc[source_l][1*2-1], rnn_state_enc_bwd[1][1*2-1])))
-                rnn_state_dec[0][1*2+1]:copy((torch.cat(rnn_state_enc[source_l][1*2], rnn_state_enc_bwd[1][1*2])))
+                rnn_state_dec[0][1*2-1+1]:copy((torch.cat(rnn_state_enc[source_l][L*2-1], rnn_state_enc_bwd[1][L*2-1])))
+                rnn_state_dec[0][1*2+1]:copy((torch.cat(rnn_state_enc[source_l][L*2], rnn_state_enc_bwd[1][L*2])))
             else
-                rnn_state_dec[0][1*2-1+0]:copy((torch.cat(rnn_state_enc[source_l][1*2-1], rnn_state_enc_bwd[1][1*2-1])))
-                rnn_state_dec[0][1*2+0]:copy((torch.cat(rnn_state_enc[source_l][1*2], rnn_state_enc_bwd[1][1*2])))
+                rnn_state_dec[0][1*2-1+0]:copy((torch.cat(rnn_state_enc[source_l][L*2-1], rnn_state_enc_bwd[1][L*2-1])))
+                rnn_state_dec[0][1*2+0]:copy((torch.cat(rnn_state_enc[source_l][L*2], rnn_state_enc_bwd[1][L*2])))
             end
             for L = 2, self.decoder_num_layers do
                 rnn_state_dec[0][L*2-1+0]:zero()
@@ -392,12 +393,13 @@ function model:step(batch, forward_only, beam_size)
             -- set decoder states
             rnn_state_dec = reset_state(self.init_fwd_dec, batch_size, 0)
             -- only use encoder final state to initialize the first layer
+            local L = self.encoder_num_layers
             if self.input_feed then
-                rnn_state_dec[0][1*2-1+1]:copy(torch.cat(rnn_state_enc[source_l][1*2-1], rnn_state_enc_bwd[1][1*2-1]))
-                rnn_state_dec[0][1*2+1]:copy(torch.cat(rnn_state_enc[source_l][1*2], rnn_state_enc_bwd[1][1*2]))
+                rnn_state_dec[0][1*2-1+1]:copy(torch.cat(rnn_state_enc[source_l][L*2-1], rnn_state_enc_bwd[1][L*2-1]))
+                rnn_state_dec[0][1*2+1]:copy(torch.cat(rnn_state_enc[source_l][L*2], rnn_state_enc_bwd[1][L*2]))
             else
-                rnn_state_dec[0][1*2-1+0]:copy(torch.cat(rnn_state_enc[source_l][1*2-1], rnn_state_enc_bwd[1][1*2-1]))
-                rnn_state_dec[0][1*2+0]:copy(torch.cat(rnn_state_enc[source_l][1*2], rnn_state_enc_bwd[1][1*2]))
+                rnn_state_dec[0][1*2-1+0]:copy(torch.cat(rnn_state_enc[source_l][L*2-1], rnn_state_enc_bwd[1][L*2-1]))
+                rnn_state_dec[0][1*2+0]:copy(torch.cat(rnn_state_enc[source_l][L*2], rnn_state_enc_bwd[1][L*2]))
             end
             for L = 2, self.decoder_num_layers do
                 rnn_state_dec[0][L*2-1+0]:zero()
@@ -512,5 +514,8 @@ end
 
 -- Save model to model_path
 function model:save(model_path)
+    for i = 1, #self.layers do
+        self.layers[i]:clearState()
+    end
     torch.save(model_path, {{self.cnn_model, self.encoder_fw, self.encoder_bw, self.decoder, self.output_projector}, self.config, self.global_step, self.optim_state})
 end
