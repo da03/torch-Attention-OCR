@@ -99,10 +99,13 @@ function str2numlist(label_str)
     for c in label_str:gmatch"." do
         local l = string.byte(c)
         local vocab_id
-        if l > 96 then
+        if l > 96 then -- a: 97, to 13; z: 122, to 38
             vocab_id = l - 97 + 12 + 1
-        else
-            vocab_id = l - 48 + 13 + 1
+        else -- 0: 48, to 4; 8: 56, to 12
+            vocab_id = l - 48 + 3 + 1
+            if vocab_id == 13 then
+                vocab_id = 39 --9: 57, to 39
+            end
         end
         table.insert(label_list, vocab_id)
     end
@@ -117,8 +120,11 @@ function numlist2str(label_list)
         local l
         if vocab_id > 12 then
             l = vocab_id - 1 - 12 + 97
+            if vocab_id == 39 then
+                l = 57 --9
+            end
         else
-            l = vocab_id - 1 - 13 + 48
+            l = vocab_id - 1 - 3 + 48
         end
         table.insert(str, l)
     end
@@ -164,6 +170,6 @@ function evalWordErrRate(labels, target_labels, visualize)
         end
         --word_error_rate = word_error_rate + math.min(1,edit_distance / string.len(target_label_str))
     end
-    return word_error_rate, labels_pred, labels_gole
+    return word_error_rate, labels_pred, labels_gold
 end
 
