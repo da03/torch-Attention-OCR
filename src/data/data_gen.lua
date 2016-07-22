@@ -113,7 +113,7 @@ function DataGen:nextBatch(batch_size)
     end
 
     if next(self.buffer) == nil then
-        self.cursor = 0
+        self.cursor = 1
         collectgarbage()
         return nil
     end
