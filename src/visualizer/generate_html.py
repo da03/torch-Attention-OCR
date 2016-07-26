@@ -49,7 +49,8 @@ def main(arguments):
                         items = line.strip().split('\t')
                         if len(items) == 5:
                             img_path, label_gold, label_pred, score_pred, score_gold = items
-                            freq_gold = words[label_gold]
+                            freq_gold = words.get(label_gold, 0)
+                            freq_pred = words.get(label_pred, 0)
                             img_base_name = img_path.replace('/', '_')[2:]
                             img_path = os.path.join(data_base_dir, img_path)
                             img_new_path = os.path.join(img_dir, img_base_name)
@@ -63,6 +64,7 @@ def main(arguments):
                             s += 'gold: %s (%s)<br/>\n'%(label_gold, score_gold)
                             s += 'predicted: %s (%s)<br/>\n'%(label_pred, score_pred)
                             s += 'gold frequency: %d out of 7.2M<br/>\n'%(freq_gold)
+                            s += 'predicted frequency: %d out of 7.2M<br/>\n'%(freq_pred)
                             s += '</li>\n'
                             s += '\n'
                         fout.write(s)
