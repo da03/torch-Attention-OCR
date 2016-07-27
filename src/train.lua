@@ -29,6 +29,8 @@ cmd:option('-output_dir', 'results', [[The path to put visualization results if 
 cmd:option('-steps_per_checkpoint', 400, [[Checkpointing (print perplexity, save model) per how many steps]])
 cmd:option('-num_batches_val', math.huge, [[Number of batches to evaluate.]])
 cmd:option('-beam_size', 1, [[Beam size.]])
+cmd:option('-use_dictionary', false, [[Use dictionary during decoding or not.]])
+cmd:option('-dictionary_path', '/n/rush_lab/data/image_data/train_dictionary.txt', [[The path containing dictionary. Format per line: word]])
 
 -- Optimization
 cmd:text('')
@@ -58,7 +60,7 @@ cmd:option('-max_encoder_l', 80, [[Maximum length of input feature sequence]]) -
 opt = cmd:parse(arg)
 torch.manualSeed(opt.seed)
 
-function train(model, phase, batch_size, num_epochs, train_data, val_data, model_dir, steps_per_checkpoint, num_batches_val, beam_size, visualize, output_dir)
+function train(model, phase, batch_size, num_epochs, train_data, val_data, model_dir, steps_per_checkpoint, num_batches_val, beam_size, visualize, output_dir, trie)
     local loss = 0
     local num_seen = 0
     local num_samples = 0
@@ -90,7 +92,7 @@ function train(model, phase, batch_size, num_epochs, train_data, val_data, model
                 break
             end
             local real_batch_size = train_batch[1]:size()[1]
-            local step_loss, stats = model:step(train_batch, forward_only, beam_size)
+            local step_loss, stats = model:step(train_batch, forward_only, beam_size, trie)
             num_seen = num_seen + 1
             num_samples = num_samples + real_batch_size
             num_nonzeros = num_nonzeros + stats[1]
@@ -134,7 +136,7 @@ function train(model, phase, batch_size, num_epochs, train_data, val_data, model
                         else
                             local real_batch_size = train_batch[1]:size()[1]
                             b = b+1
-                            local step_loss, stats = model:step(val_batch, true, beam_size)
+                            local step_loss, stats = model:step(val_batch, true, beam_size, trie)
                             val_loss = val_loss + step_loss
                             val_num_samples = val_num_samples + real_batch_size
                             val_num_nonzeros = val_num_nonzeros + stats[1]
@@ -220,8 +222,12 @@ function main()
         val_data = DataGen(opt.data_base_dir, opt.val_data_path, 10.0)
         logging:info(string.format('Validation data loaded from %s', opt.val_data_path))
     end
-
-    train(model, phase, batch_size, num_epochs, train_data, val_data, model_dir, steps_per_checkpoint, num_batches_val, beam_size, visualize, output_dir)
+    local trie = nil
+    if opt.use_dictionary then
+        logging:info(string.format('Load dictionary from %s', opt.dictionary_path))
+        trie = loadDictionary(opt.dictionary_path)
+    end
+    train(model, phase, batch_size, num_epochs, train_data, val_data, model_dir, steps_per_checkpoint, num_batches_val, beam_size, visualize, output_dir, trie)
 
     logging:shutdown()
     model:shutdown()

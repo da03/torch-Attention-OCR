@@ -1,3 +1,10 @@
+tds = require('tds')
+
+if logging ~= nil then
+    log = function(msg) logging:info(msg) end
+else
+    log = print
+end
 -- http://stackoverflow.com/questions/17119804/lua-array-shuffle-not-working
 function swap(array, index1, index2)
     array[index1], array[index2] = array[index2], array[index1]
@@ -166,6 +173,8 @@ function evalWordErrRate(labels, target_labels, visualize)
         end
         local edit_distance = string.levenshtein(label_str, target_label_str)
         if edit_distance ~= 0 then
+            print (label_str)
+            print (target_label_str)
             word_error_rate = word_error_rate + 1
         end
         --word_error_rate = word_error_rate + math.min(1,edit_distance / string.len(target_label_str))
@@ -173,3 +182,41 @@ function evalWordErrRate(labels, target_labels, visualize)
     return word_error_rate, labels_pred, labels_gold
 end
 
+function loadDictionary(dictionary_path)
+    local file, err = io.open(dictionary_path, "r")
+    if err then
+        log(string.format('Error: Data file %s not found ', self.data_path))
+        os.exit()
+    end
+    local trie = tds.Hash()
+    trie[2] = tds.Hash() -- start symbol
+    local idx = 0
+    for line in file:lines() do
+        idx = idx + 1
+        if idx % 1000000==0 then
+            log (string.format('%d lines read', idx))
+        end
+        local str = trim(line)
+        local node = trie[2]
+        for c in str:gmatch"." do
+            local l = string.byte(c)
+            local vocab_id
+            if l > 96 then -- a: 97, to 13; z: 122, to 38
+                vocab_id = l - 97 + 12 + 1
+            else -- 0: 48, to 4; 8: 56, to 12
+                vocab_id = l - 48 + 3 + 1
+                if vocab_id == 13 then
+                    vocab_id = 39 --9: 57, to 39
+                end
+            end
+            if node[vocab_id] == nil then
+                node[vocab_id] = tds.Hash()
+            end
+            node = node[vocab_id]
+        end
+        if node[3] == nil then
+            node[3] = tds.Hash()
+        end
+    end
+    return trie
+end

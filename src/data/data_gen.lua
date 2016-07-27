@@ -35,7 +35,7 @@ function DataGen:__init(data_base_dir, data_path, max_aspect_ratio)
         end
     end
     self.lines = tds.Hash()
-    idx = 0
+    local idx = 0
     for line in file:lines() do
         idx = idx + 1
         if idx % 1000000==0 then

@@ -48,7 +48,6 @@ function model:load(model_path, config)
 
     assert(paths.filep(model_path), string.format('Model %s does not exist!', model_path))
 
-    log(string.format('Loading model from %s', model_path))
     local checkpoint = torch.load(model_path)
     local model, model_config = checkpoint[1], checkpoint[2]
     self.cnn_model = model[1]:double()
@@ -195,7 +194,7 @@ function model:_build()
 end
 
 -- one step 
-function model:step(batch, forward_only, beam_size)
+function model:step(batch, forward_only, beam_size, trie)
     if forward_only then
         beam_size = beam_size or 1 -- default argmax
         beam_size = math.min(beam_size, self.target_vocab_size)
@@ -213,10 +212,12 @@ function model:step(batch, forward_only, beam_size)
                 table.insert(self.beam_init_fwd_dec, beam_decoder_h_init:clone()) -- memory cell
                 table.insert(self.beam_init_fwd_dec, beam_decoder_h_init:clone()) -- hidden state
             end
+            self.trie_locations = {}
         else
             self.beam_scores:zero()
             self.current_indices_history = {}
             self.beam_parents_history = {}
+            self.trie_locations = {}
         end
     end
     local input_batch = localize(batch[1])
@@ -346,6 +347,15 @@ function model:step(batch, forward_only, beam_size)
             for t = 1, target_l do
                 self.decoder_clones[t]:evaluate()
                 if t == 1 then
+                    -- self.trie_locations
+                    if trie ~= nil then
+                        for b = 1, batch_size do
+                            if self.trie_locations[b] == nil then
+                                self.trie_locations[b] = {}
+                            end
+                            self.trie_locations[b] = trie[2]
+                        end
+                    end
                     beam_input = target[t]
                     decoder_input = {beam_input, context, table.unpack(rnn_state_dec[t-1])}
                 else
@@ -359,18 +369,117 @@ function model:step(batch, forward_only, beam_size)
                 local beam_parents
                 if t == 1 then
                     -- probs batch_size, vocab_size
-                    self.beam_scores, raw_indices = probs:topk(beam_size, true)
-                    current_indices = raw_indices
+                    if trie == nil then
+                        self.beam_scores, raw_indices = probs:topk(beam_size, true)
+                        current_indices = raw_indices
+                    else
+                        self.beam_scores:zero()
+                        raw_indices = localize(torch.zeros(batch_size, beam_size))
+                        local _, i = probs:sort(2, true)
+                        for b = 1, batch_size do
+                            local num_beam = 0
+                            for vocab = 1, self.target_vocab_size do
+                                if num_beam ~= beam_size then
+                                    local vocab_id = i[b][vocab]
+                                    if self.trie_locations[b][vocab_id] ~= nil then
+                                        num_beam = num_beam + 1
+                                        raw_indices[b][num_beam] = vocab_id
+                                        self.beam_scores[b][num_beam] = probs[b][vocab_id]
+                                    end
+                                end
+                            end
+                            if num_beam ~= beam_size then
+                                log(string.format('Warning: valid beam size: %d', num_beam))
+                                local vocab_id = nil
+                                for vocab = 1, self.target_vocab_size do
+                                    if vocab_id == nil then
+                                        local vocab_id_tmp = i[b][vocab]
+                                        if self.trie_locations[b][vocab_id_tmp] ~= nil then
+                                            vocab_id = vocab_id_tmp
+                                        end
+                                    end
+                                end
+                                for beam = num_beam+1, beam_size do
+                                    raw_indices[b][beam] = vocab_id
+                                    self.beam_scores[b][beam] = probs[b][vocab_id]
+                                end
+                            end
+                            local trie_locations = {}
+                            for beam = 1, beam_size do
+                                local vocab_id = raw_indices[b][beam]
+                                trie_locations[beam] = self.trie_locations[b][vocab_id]
+                            end
+                            self.trie_locations[b] = trie_locations
+                        end
+                        current_indices = raw_indices
+                    end
                 else
+                    -- batch_size*beam_size, vocab_size
                     probs:select(2,1):maskedFill(beam_input:eq(1), 0) -- once padding or EOS encountered, stuck at that point
                     probs:select(2,1):maskedFill(beam_input:eq(3), 0)
                     local total_scores = (probs:view(batch_size, beam_size, self.target_vocab_size) + self.beam_scores:view(batch_size, beam_size, 1):expand(batch_size, beam_size, self.target_vocab_size)):view(batch_size, beam_size*self.target_vocab_size) -- batch_size, beam_size * target_vocab_size
-                    self.beam_scores, raw_indices = total_scores:topk(beam_size, true) --batch_size, beam_size
-                    raw_indices:add(-1)
-                    if use_cuda then
-                        current_indices = raw_indices:double():fmod(self.target_vocab_size):cuda()+1 -- batch_size, beam_size for current vocab
+                    if trie == nil then
+                        self.beam_scores, raw_indices = total_scores:topk(beam_size, true) --batch_size, beam_size
+                        raw_indices:add(-1)
+                        if use_cuda then
+                            current_indices = raw_indices:double():fmod(self.target_vocab_size):cuda()+1 -- batch_size, beam_size for current vocab
+                        else
+                            current_indices = raw_indices:fmod(self.target_vocab_size)+1 -- batch_size, beam_size for current vocab
+                        end
                     else
-                        current_indices = raw_indices:fmod(self.target_vocab_size)+1 -- batch_size, beam_size for current vocab
+                        raw_indices = localize(torch.zeros(batch_size, beam_size))
+                        current_indices = localize(torch.zeros(batch_size, beam_size))
+                        local _, i = total_scores:sort(2, true) -- batch_size, beam_size*target_size
+                        for b = 1, batch_size do
+                            local num_beam = 0
+                            for beam_vocab = 1, beam_size*self.target_vocab_size do
+                                if num_beam ~= beam_size then
+                                    local beam_vocab_id = i[b][beam_vocab]
+                                    local vocab_id = (beam_vocab_id-1) % self.target_vocab_size + 1
+                                    local beam_id = math.floor((beam_vocab_id-1) / self.target_vocab_size)+1 -- batch_size, beam_size for number of beam in each batch
+                                    if vocab_id == 1 or self.trie_locations[b][beam_id][vocab_id] ~= nil then
+                                        num_beam = num_beam + 1
+                                        current_indices[b][num_beam] = vocab_id
+                                        raw_indices[b][num_beam] = beam_vocab_id-1
+                                        self.beam_scores[b][num_beam] = total_scores[b][beam_vocab_id]
+                                    end
+                                end
+                            end
+                            if num_beam ~= beam_size then
+                                log(string.format('Warning: valid beam size: %d', num_beam))
+                                local beam_vocab_id = nil
+                                for beam_vocab = 1, beam_size*self.target_vocab_size do
+                                    if beam_vocab_id == nil then
+                                        local beam_vocab_id_tmp = i[b][beam_vocab]
+                                        local vocab_id = (beam_vocab_id_tmp-1) % self.target_vocab_size + 1
+                                        local beam_id = math.floor((beam_vocab_id_tmp-1) / self.target_vocab_size)+1 -- batch_size, beam_size for number of beam in each batch
+                                        if vocab_id == 1 or self.trie_locations[b][vocab_id_tmp] ~= nil then
+                                            beam_vocab_id = vocab_id_tmp
+                                        end
+                                    end
+                                end
+                                for beam = num_beam+1, beam_size do
+                                    local vocab_id = (beam_vocab_id-1) % self.target_vocab_size + 1
+                                    local beam_id = ((beam_vocab_id-1) / self.target_vocab_size):floor()+1 -- batch_size, beam_size for number of beam in each batch
+                                    current_indices[b][beam] = vocab_id
+                                    raw_indices[b][beam] = beam_vocab_id-1
+                                    self.beam_scores[b][beam] = total_scores[b][beam_vocab_id]
+                                end
+                            end
+                            local trie_locations = {}
+                            for beam = 1, beam_size do
+                                local beam_vocab_id = raw_indices[b][beam]
+                                local beam_id = math.floor((beam_vocab_id) / self.target_vocab_size)+1 -- batch_size, beam_size for number of beam in each batch
+                                local vocab_id = (beam_vocab_id) % self.target_vocab_size + 1
+                                if vocab_id == 1 then
+                                    trie_locations[beam] = self.trie_locations[b][beam_id]
+                                else
+                                    trie_locations[beam] = self.trie_locations[b][beam_id][vocab_id]
+                                end
+                            end
+                            self.trie_locations[b] = trie_locations
+                        end
+                        
                     end
                 end
                 beam_parents = (raw_indices / self.target_vocab_size):floor()+1 -- batch_size, beam_size for number of beam in each batch
