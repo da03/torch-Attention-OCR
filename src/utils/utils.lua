@@ -173,8 +173,6 @@ function evalWordErrRate(labels, target_labels, visualize)
         end
         local edit_distance = string.levenshtein(label_str, target_label_str)
         if edit_distance ~= 0 then
-            print (label_str)
-            print (target_label_str)
             word_error_rate = word_error_rate + 1
         end
         --word_error_rate = word_error_rate + math.min(1,edit_distance / string.len(target_label_str))
