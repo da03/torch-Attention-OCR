@@ -417,7 +417,7 @@ function model:step(batch, forward_only, beam_size, trie)
                     -- batch_size*beam_size, vocab_size
                     probs:select(2,1):maskedFill(beam_input:eq(1), 0) -- once padding or EOS encountered, stuck at that point
                     probs:select(2,1):maskedFill(beam_input:eq(3), 0)
-                    local total_scores = (probs:view(batch_size, beam_size, self.target_vocab_size) + self.beam_scores:view(batch_size, beam_size, 1):expand(batch_size, beam_size, self.target_vocab_size)):view(batch_size, beam_size*self.target_vocab_size) -- batch_size, beam_size * target_vocab_size
+                    local total_scores = (probs:view(batch_size, beam_size, self.target_vocab_size) + self.beam_scores[{{1,batch_size}, {}}]:view(batch_size, beam_size, 1):expand(batch_size, beam_size, self.target_vocab_size)):view(batch_size, beam_size*self.target_vocab_size) -- batch_size, beam_size * target_vocab_size
                     if trie == nil then
                         self.beam_scores, raw_indices = total_scores:topk(beam_size, true) --batch_size, beam_size
                         raw_indices:add(-1)
@@ -540,7 +540,7 @@ function model:step(batch, forward_only, beam_size, trie)
         if forward_only then
             -- final decoding
             local labels = localize(torch.zeros(batch_size, target_l)):fill(1)
-            local scores, indices = torch.max(self.beam_scores, 2) -- batch_size, 1
+            local scores, indices = torch.max(self.beam_scores[{{1,batch_size},{}}], 2) -- batch_size, 1
             scores = scores:view(-1) -- batch_size
             indices = indices:view(-1) -- batch_size
             local current_indices = self.current_indices_history[#self.current_indices_history]:view(-1):index(1,indices+localize(torch.range(0,(batch_size-1)*beam_size, beam_size):long())) --batch_size
