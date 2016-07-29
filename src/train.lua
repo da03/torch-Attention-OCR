@@ -134,7 +134,7 @@ function train(model, phase, batch_size, num_epochs, train_data, val_data, model
                         if val_batch == nil then
                             val_data:shuffle()
                         else
-                            local real_batch_size = train_batch[1]:size()[1]
+                            local real_batch_size = val_batch[1]:size()[1]
                             b = b+1
                             local step_loss, stats = model:step(val_batch, true, beam_size, trie)
                             val_loss = val_loss + step_loss
