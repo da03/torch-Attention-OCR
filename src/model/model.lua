@@ -12,7 +12,7 @@ require 'LSTM'
 require 'output_projector'
 require 'criterion'
 require 'model_utils'
-require 'optim_adadelta'
+require 'optim_sgd'
 
 local model = torch.class('Model')
 
@@ -371,6 +371,7 @@ function model:step(batch, forward_only, beam_size, trie)
                     -- probs batch_size, vocab_size
                     if trie == nil then
                         self.beam_scores, raw_indices = probs:topk(beam_size, true)
+                        raw_indices = localize(raw_indices:double())
                         current_indices = raw_indices
                     else
                         self.beam_scores:zero()
@@ -420,6 +421,7 @@ function model:step(batch, forward_only, beam_size, trie)
                     local total_scores = (probs:view(batch_size, beam_size, self.target_vocab_size) + self.beam_scores[{{1,batch_size}, {}}]:view(batch_size, beam_size, 1):expand(batch_size, beam_size, self.target_vocab_size)):view(batch_size, beam_size*self.target_vocab_size) -- batch_size, beam_size * target_vocab_size
                     if trie == nil then
                         self.beam_scores, raw_indices = total_scores:topk(beam_size, true) --batch_size, beam_size
+                        raw_indices = localize(raw_indices:double())
                         raw_indices:add(-1)
                         if use_cuda then
                             current_indices = raw_indices:double():fmod(self.target_vocab_size):cuda()+1 -- batch_size, beam_size for current vocab
@@ -541,6 +543,7 @@ function model:step(batch, forward_only, beam_size, trie)
             -- final decoding
             local labels = localize(torch.zeros(batch_size, target_l)):fill(1)
             local scores, indices = torch.max(self.beam_scores[{{1,batch_size},{}}], 2) -- batch_size, 1
+            indices = localize(indices:double())
             scores = scores:view(-1) -- batch_size
             indices = indices:view(-1) -- batch_size
             local current_indices = self.current_indices_history[#self.current_indices_history]:view(-1):index(1,indices+localize(torch.range(0,(batch_size-1)*beam_size, beam_size):long())) --batch_size
@@ -553,46 +556,47 @@ function model:step(batch, forward_only, beam_size, trie)
             end
             local word_err, labels_pred, labels_gold = evalWordErrRate(labels, target_eval_batch, self.visualize)
             accuracy = batch_size - word_err
-            if self.visualize then
-                -- get gold score
-                rnn_state_dec = reset_state(self.init_fwd_dec, batch_size, 0)
-                -- only use encoder final state to initialize the first layer
-                local L = self.encoder_num_layers
-                if self.input_feed then
-                    rnn_state_dec[0][1*2-1+1]:copy(torch.cat(rnn_state_enc[source_l][L*2-1], rnn_state_enc_bwd[1][L*2-1]))
-                    rnn_state_dec[0][1*2+1]:copy(torch.cat(rnn_state_enc[source_l][L*2], rnn_state_enc_bwd[1][L*2]))
-                else
-                    rnn_state_dec[0][1*2-1+0]:copy(torch.cat(rnn_state_enc[source_l][L*2-1], rnn_state_enc_bwd[1][L*2-1]))
-                    rnn_state_dec[0][1*2+0]:copy(torch.cat(rnn_state_enc[source_l][L*2], rnn_state_enc_bwd[1][L*2]))
-                end
-                for L = 2, self.decoder_num_layers do
-                    rnn_state_dec[0][L*2-1+0]:zero()
-                    rnn_state_dec[0][L*2+0]:zero()
-                end
-                local gold_scores = localize(torch.zeros(batch_size))
-                for t = 1, target_l do
-                    self.decoder_clones[t]:evaluate()
-                    local decoder_input
-                    decoder_input = {target[t], context, table.unpack(rnn_state_dec[t-1])}
-                    local out = self.decoder_clones[t]:forward(decoder_input)
-                    local next_state = {}
-                    --table.insert(preds, out[#out])
-                    local pred = self.output_projector:forward(out[#out]) --batch_size, vocab_size
-                    -- target_eval[t] --batch_size
-                    for j = 1, batch_size do
-                        if target_eval[t][j] ~= 1 then
-                            gold_scores[j] = gold_scores[j] + pred[j][target_eval[t][j]]
-                        end
+            -- get gold score
+            rnn_state_dec = reset_state(self.init_fwd_dec, batch_size, 0)
+            -- only use encoder final state to initialize the first layer
+            local L = self.encoder_num_layers
+            if self.input_feed then
+                rnn_state_dec[0][1*2-1+1]:copy(torch.cat(rnn_state_enc[source_l][L*2-1], rnn_state_enc_bwd[1][L*2-1]))
+                rnn_state_dec[0][1*2+1]:copy(torch.cat(rnn_state_enc[source_l][L*2], rnn_state_enc_bwd[1][L*2]))
+            else
+                rnn_state_dec[0][1*2-1+0]:copy(torch.cat(rnn_state_enc[source_l][L*2-1], rnn_state_enc_bwd[1][L*2-1]))
+                rnn_state_dec[0][1*2+0]:copy(torch.cat(rnn_state_enc[source_l][L*2], rnn_state_enc_bwd[1][L*2]))
+            end
+            for L = 2, self.decoder_num_layers do
+                rnn_state_dec[0][L*2-1+0]:zero()
+                rnn_state_dec[0][L*2+0]:zero()
+            end
+            local gold_scores = localize(torch.zeros(batch_size))
+            for t = 1, target_l do
+                self.decoder_clones[t]:evaluate()
+                local decoder_input
+                decoder_input = {target[t], context, table.unpack(rnn_state_dec[t-1])}
+                local out = self.decoder_clones[t]:forward(decoder_input)
+                local next_state = {}
+                --table.insert(preds, out[#out])
+                local pred = self.output_projector:forward(out[#out]) --batch_size, vocab_size
+                loss = loss + self.criterion:forward(pred, target_eval[t])/batch_size
+                -- target_eval[t] --batch_size
+                for j = 1, batch_size do
+                    if target_eval[t][j] ~= 1 then
+                        gold_scores[j] = gold_scores[j] + pred[j][target_eval[t][j]]
                     end
+                end
 
-                    if self.input_feed then
-                        table.insert(next_state, out[#out])
-                    end
-                    for j = 1, #out-1 do
-                        table.insert(next_state, out[j])
-                    end
-                    rnn_state_dec[t] = next_state
+                if self.input_feed then
+                    table.insert(next_state, out[#out])
                 end
+                for j = 1, #out-1 do
+                    table.insert(next_state, out[j])
+                end
+                rnn_state_dec[t] = next_state
+            end
+            if self.visualize then
                 for i = 1, #img_paths do
                     self.visualize_file:write(string.format('%s\t%s\t%s\t%f\t%f\n', img_paths[i], labels_gold[i], labels_pred[i], scores[i], gold_scores[i]))
                 end
@@ -663,7 +667,8 @@ function model:step(batch, forward_only, beam_size, trie)
     end
     local optim_state = self.optim_state
     if not forward_only then
-        local _, loss, stats = optim.adadelta_list(feval, self.params, optim_state); loss = loss[1]
+        --local _, loss, stats = optim.adadelta_list(feval, self.params, optim_state); loss = loss[1]
+        local _, loss, stats = optim.sgd_list(feval, self.params, optim_state); loss = loss[1]
         return loss*batch_size, stats
     else
         local loss, _, stats = feval(self.params)

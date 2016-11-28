@@ -1,7 +1,7 @@
 # torch-Attention-OCR (In Progress)
 
 ```
-th src/train.lua -phase train
+th src/train.lua -phase train -input_feed
 ```
 
 ```
