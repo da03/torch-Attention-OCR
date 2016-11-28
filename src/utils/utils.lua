@@ -180,7 +180,7 @@ function evalWordErrRate(labels, target_labels, visualize)
     return word_error_rate, labels_pred, labels_gold
 end
 
-function loadDictionary(dictionary_path)
+function loadDictionary(dictionary_path, allow_digit_prefix)
     local file, err = io.open(dictionary_path, "r")
     if err then
         log(string.format('Error: Data file %s not found ', self.data_path))
@@ -196,6 +196,16 @@ function loadDictionary(dictionary_path)
         end
         local str = trim(line)
         local node = trie[2]
+        if allow_digit_prefix then
+            node[3] = trie[2] -- allow output nothing
+            for l = 48, 57 do
+                vocab_id = l - 48 + 3 + 1
+                if vocab_id == 13 then
+                    vocab_id = 39 --9: 57, to 39
+                end
+                node[vocab_id] = trie[2]
+            end
+        end
         for c in str:gmatch"." do
             local l = string.byte(c)
             local vocab_id

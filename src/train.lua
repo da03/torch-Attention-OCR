@@ -30,6 +30,7 @@ cmd:option('-steps_per_checkpoint', 400, [[Checkpointing (print perplexity, save
 cmd:option('-num_batches_val', math.huge, [[Number of batches to evaluate.]])
 cmd:option('-beam_size', 1, [[Beam size.]])
 cmd:option('-use_dictionary', false, [[Use dictionary during decoding or not.]])
+cmd:option('-allow_digit_prefix', false, [[During decoding, allow arbitary digits before word.]])
 cmd:option('-dictionary_path', '/n/rush_lab/data/image_data/train_dictionary.txt', [[The path containing dictionary. Format per line: word]])
 
 -- Optimization
@@ -130,7 +131,7 @@ function train(model, phase, batch_size, num_epochs, train_data, val_data, model
                     local val_accuracy = 0
                     local b = 1
                     while b <= num_batches_val do
-                        val_batch = val_data:nextBatch(batch_size)
+                        val_batch = val_data:nextBatch(10)
                         if val_batch == nil then
                             val_data:shuffle()
                         else
@@ -225,7 +226,7 @@ function main()
     local trie = nil
     if opt.use_dictionary then
         logging:info(string.format('Load dictionary from %s', opt.dictionary_path))
-        trie = loadDictionary(opt.dictionary_path)
+        trie = loadDictionary(opt.dictionary_path, opt.allow_digit_prefix)
     end
     train(model, phase, batch_size, num_epochs, train_data, val_data, model_dir, steps_per_checkpoint, num_batches_val, beam_size, visualize, output_dir, trie)
 
