@@ -106,13 +106,10 @@ function str2numlist(label_str)
     for c in label_str:gmatch"." do
         local l = string.byte(c)
         local vocab_id
-        if l > 96 then -- a: 97, to 13; z: 122, to 38
-            vocab_id = l - 97 + 12 + 1
-        else -- 0: 48, to 4; 8: 56, to 12
+        if l > 96 then -- a: 97, to 14; z: 122, to 39
+            vocab_id = l - 97 + 13 + 1
+        else -- 0: 48, to 4; 9: 57, to 13
             vocab_id = l - 48 + 3 + 1
-            if vocab_id == 13 then
-                vocab_id = 39 --9: 57, to 39
-            end
         end
         table.insert(label_list, vocab_id)
     end
@@ -125,11 +122,8 @@ function numlist2str(label_list)
     for i = 1, #label_list do
         local vocab_id = label_list[i]
         local l
-        if vocab_id > 12 then
-            l = vocab_id - 1 - 12 + 97
-            if vocab_id == 39 then
-                l = 57 --9
-            end
+        if vocab_id > 13 then
+            l = vocab_id - 1 - 13 + 97
         else
             l = vocab_id - 1 - 3 + 48
         end
@@ -200,22 +194,16 @@ function loadDictionary(dictionary_path, allow_digit_prefix)
             node[3] = trie[2] -- allow output nothing
             for l = 48, 57 do
                 vocab_id = l - 48 + 3 + 1
-                if vocab_id == 13 then
-                    vocab_id = 39 --9: 57, to 39
-                end
                 node[vocab_id] = trie[2]
             end
         end
         for c in str:gmatch"." do
             local l = string.byte(c)
             local vocab_id
-            if l > 96 then -- a: 97, to 13; z: 122, to 38
-                vocab_id = l - 97 + 12 + 1
-            else -- 0: 48, to 4; 8: 56, to 12
+            if l > 96 then -- a: 97, to 14; z: 122, to 39
+                vocab_id = l - 97 + 13 + 1
+            else -- 0: 48, to 4; 9: 57, to 13
                 vocab_id = l - 48 + 3 + 1
-                if vocab_id == 13 then
-                    vocab_id = 39 --9: 57, to 39
-                end
             end
             if node[vocab_id] == nil then
                 node[vocab_id] = tds.Hash()
