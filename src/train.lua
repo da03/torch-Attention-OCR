@@ -26,7 +26,7 @@ cmd:option('-log_path', 'log.txt', [[The path to put log]])
 cmd:option('-output_dir', 'results', [[The path to put visualization results if visualize is set to True]])
 
 -- Display
-cmd:option('-steps_per_checkpoint', 4, [[Checkpointing (print perplexity, save model) per how many steps]])
+cmd:option('-steps_per_checkpoint', 400, [[Checkpointing (print perplexity, save model) per how many steps]])
 cmd:option('-num_batches_val', math.huge, [[Number of batches to evaluate.]])
 cmd:option('-beam_size', 1, [[Beam size.]])
 cmd:option('-use_dictionary', false, [[Use dictionary during decoding or not.]])
@@ -38,7 +38,7 @@ cmd:text('')
 cmd:text('**Optimization**')
 cmd:text('')
 cmd:option('-num_epochs', 1000, [[The number of whole data passes]])
-cmd:option('-batch_size', 128, [[Batch size]])
+cmd:option('-batch_size', 400, [[Batch size]])
 cmd:option('-learning_rate', 0.1, [[Initial learning rate]])
 cmd:option('-learning_rate_min', 0.001, [[Minimum learning rate]])
 cmd:option('-lr_decay', 0.5, [[Decay learning rate by this much if (i) perplexity does not decrease on the validation set or (ii) epoch has gone past the start_decay_at_limit]])
@@ -60,6 +60,7 @@ cmd:option('-visualize', false, [[Print results or not]])
 cmd:option('-seed', 910820, [[Load model from model-dir or not]])
 cmd:option('-max_decoder_l', 50, [[Maximum number of output targets]]) -- when evaluate, this is the cut-off length.
 cmd:option('-max_encoder_l', 80, [[Maximum length of input feature sequence]]) --320*10/4-1
+cmd:option('-prealloc', false, [[Use memory preallocation and sharing between cloned encoder/decoders]])
 
 opt = cmd:parse(arg)
 torch.manualSeed(opt.seed)
@@ -98,6 +99,7 @@ function train(model, phase, batch_size, num_epochs, train_data, val_data, model
             end
             local real_batch_size = train_batch[1]:size()[1]
             local step_loss, stats = model:step(train_batch, forward_only, beam_size, trie)
+            logging:info(string.format('%f', math.exp(loss/num_nonzeros)))
             num_seen = num_seen + 1
             num_samples = num_samples + real_batch_size
             num_nonzeros = num_nonzeros + stats[1]
@@ -151,10 +153,15 @@ function train(model, phase, batch_size, num_epochs, train_data, val_data, model
             local val_accuracy = 0
             local b = 1
             while b <= num_batches_val do
-                logging:info (string.format('%d',b))
+                if b % 100 == 0 then
+                    logging:info (string.format('%d',b))
+                end
                 val_batch = val_data:nextBatch(batch_size)
                 if val_batch == nil then
                     val_data:shuffle()
+                    if num_batches_val >= math.huge then
+                        break
+                    end
                 else
                     local real_batch_size = val_batch[1]:size()[1]
                     b = b+1
@@ -182,6 +189,9 @@ function main()
     opt = cmd:parse(arg)
 
     logging = logger(opt.log_path)
+    logging:info('Command Line Arguments:')
+    logging:info(table.concat(arg, ' '))
+    logging:info('End Command Line Arguments')
 
     local phase= opt.phase
     local batch_size = opt.batch_size

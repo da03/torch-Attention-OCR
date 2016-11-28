@@ -13,6 +13,7 @@ require 'output_projector'
 require 'criterion'
 require 'model_utils'
 require 'optim_sgd'
+require 'memory'
 
 local model = torch.class('Model')
 
@@ -50,6 +51,7 @@ function model:load(model_path, config)
 
     local checkpoint = torch.load(model_path)
     local model, model_config = checkpoint[1], checkpoint[2]
+    preallocateMemory(model_config.prealloc)
     self.cnn_model = model[1]:double()
     self.encoder_fw = model[2]:double()
     self.encoder_bw = model[3]:double()
@@ -89,16 +91,21 @@ function model:create(config)
     self.max_decoder_l = config.max_decoder_l
     self.input_feed = config.input_feed
     self.batch_size = config.batch_size
+    self.prealloc = config.prealloc
+
+    preallocateMemory(config.prealloc)
 
     -- CNN model, input size: (batch_size, 1, 32, width), output size: (batch_size, sequence_length, 512)
     self.cnn_model = createCNNModel()
     -- createLSTM(input_size, num_hidden, num_layers, dropout, use_attention, input_feed, use_lookup, vocab_size)
-    self.encoder_fw = createLSTM(self.cnn_feature_size, self.encoder_num_hidden, self.encoder_num_layers, self.dropout, false, false, false)
-    self.encoder_bw = createLSTM(self.cnn_feature_size, self.encoder_num_hidden, self.encoder_num_layers, self.dropout, false, false, false)
-    self.decoder = createLSTM(self.target_embedding_size, self.decoder_num_hidden, self.decoder_num_layers, self.dropout, true, self.input_feed, true, self.target_vocab_size)
+    self.encoder_fw = createLSTM(self.cnn_feature_size, self.encoder_num_hidden, self.encoder_num_layers, self.dropout, false, false, false, nil, self.batch_size, self.max_encoder_l, 'encoder-fw')
+    self.encoder_bw = createLSTM(self.cnn_feature_size, self.encoder_num_hidden, self.encoder_num_layers, self.dropout, false, false, false, nil, self.batch_size, self.max_encoder_l, 'encoder-bw')
+    self.decoder = createLSTM(self.target_embedding_size, self.decoder_num_hidden, self.decoder_num_layers, self.dropout, true, self.input_feed, true, self.target_vocab_size, self.batch_size, self.max_encoder_l, 'decoder')
     self.output_projector = createOutputUnit(self.decoder_num_hidden, self.target_vocab_size)
     self.global_step = 0
 
+    self.optim_state = {}
+    self.optim_state.learningRate = config.learning_rate
     self:_build()
 end
 
@@ -116,6 +123,7 @@ function model:_build()
     log(string.format('max_decoder_l: %d', self.max_decoder_l))
     log(string.format('input_feed: %s', self.input_feed))
     log(string.format('batch_size: %d', self.batch_size))
+    log(string.format('prealloc: %s', self.prealloc))
 
     self.config = {}
     self.config.dropout = self.dropout
@@ -129,6 +137,7 @@ function model:_build()
     self.config.max_decoder_l = self.max_decoder_l
     self.config.input_feed = self.input_feed
     self.config.batch_size = self.batch_size
+    self.config.prealloc = self.prealloc
 
     if self.optim_state == nil then
         self.optim_state = {}
@@ -188,6 +197,24 @@ function model:_build()
     self.dec_offset = 3 -- offset depends on input feeding
     if self.input_feed then
         self.dec_offset = self.dec_offset + 1
+    end
+    for i = 1, #self.encoder_fw_clones do
+        if self.encoder_fw_clones[i].apply then
+            self.encoder_fw_clones[i]:apply(function(m) m:setReuse() end)
+            if self.prealloc then self.encoder_fw_clones[i]:apply(function(m) m:setPrealloc() end) end
+        end
+    end
+    for i = 1, #self.encoder_bw_clones do
+        if self.encoder_bw_clones[i].apply then
+            self.encoder_bw_clones[i]:apply(function(m) m:setReuse() end)
+            if self.prealloc then self.encoder_bw_clones[i]:apply(function(m) m:setPrealloc() end) end
+        end
+    end
+    for i = 1, #self.decoder_clones do
+        if self.decoder_clones[i].apply then
+            self.decoder_clones[i]:apply(function (m) m:setReuse() end)
+            if self.prealloc then self.decoder_clones[i]:apply(function(m) m:setPrealloc() end) end
+        end
     end
     self.init_beam = false
     self.visualize = false
