@@ -26,7 +26,7 @@ cmd:option('-log_path', 'log.txt', [[The path to put log]])
 cmd:option('-output_dir', 'results', [[The path to put visualization results if visualize is set to True]])
 
 -- Display
-cmd:option('-steps_per_checkpoint', 400, [[Checkpointing (print perplexity, save model) per how many steps]])
+cmd:option('-steps_per_checkpoint', 1000, [[Checkpointing (print perplexity, save model) per how many steps]])
 cmd:option('-num_batches_val', math.huge, [[Number of batches to evaluate.]])
 cmd:option('-beam_size', 1, [[Beam size.]])
 cmd:option('-use_dictionary', false, [[Use dictionary during decoding or not.]])
@@ -44,7 +44,7 @@ cmd:option('-learning_rate_min', 0.001, [[Minimum learning rate]])
 cmd:option('-lr_decay', 0.5, [[Decay learning rate by this much if (i) perplexity does not decrease on the validation set or (ii) epoch has gone past the start_decay_at_limit]])
 
 -- Network
-cmd:option('-dropout', 0.3, [[Dropout probability]])
+cmd:option('-dropout', 0.0, [[Dropout probability]])
 cmd:option('-target_embedding_size', 20, [[Embedding dimension for each target]])
 cmd:option('-input_feed', false, [[Whether or not use LSTM attention decoder cell]])
 cmd:option('-encoder_num_hidden', 512, [[Number of hidden units in encoder cell]])
@@ -121,9 +121,6 @@ function train(model, phase, batch_size, num_epochs, train_data, val_data, model
                     local model_path = paths.concat(model_dir, string.format('model-%d', model.global_step))
                     local final_model_path_tmp = paths.concat(model_dir, '.final-model.tmp')
                     local final_model_path = paths.concat(model_dir, 'final-model')
-                    if model.global_step % 1000 ~= 0 then
-                        model_path = final_model_path
-                    end
                     model:save(model_path)
                     logging:info(string.format('Model saved to %s', model_path))
                     os.execute(string.format('cp %s %s', model_path, final_model_path_tmp))
@@ -134,14 +131,47 @@ function train(model, phase, batch_size, num_epochs, train_data, val_data, model
                     loss = 0
                     accuracy = 0
                     collectgarbage()
+                    -- Evaluate on val data
+                    logging:info(string.format('Evaluating model on %s batches of validation data', num_batches_val))
+                    local val_loss = 0
+                    local val_num_samples = 0
+                    local val_num_nonzeros = 0
+                    local val_accuracy = 0
+                    local b = 1
+                    while b <= num_batches_val do
+                        if b % 100 == 0 then
+                            logging:info (string.format('%d',b))
+                        end
+                        val_batch = val_data:nextBatch(batch_size)
+                        if val_batch == nil then
+                            val_data:shuffle()
+                            if num_batches_val >= math.huge then
+                                break
+                            end
+                        else
+                            local real_batch_size = val_batch[1]:size()[1]
+                            b = b+1
+                            local step_loss, stats = model:step(val_batch, true, beam_size, trie)
+                            val_loss = val_loss + step_loss
+                            val_num_samples = val_num_samples + real_batch_size
+                            val_num_nonzeros = val_num_nonzeros + stats[1]
+                            val_accuracy = val_accuracy + stats[2]
+                        end
+                    end
+                    logging:info(string.format('Step %d - Val Accuracy = %f, loss = %f', model.global_step, val_accuracy/val_num_samples, math.exp(val_loss/val_num_nonzeros)))
+                    local learning_rate = model.optim_state.learning_rate
+                    if prev_val_loss ~= nil and val_loss > prev_val_loss and learning_rate > opt.learning_rate_min then
+                        learning_rate = math.max(learning_rate*opt.lr_decay, opt.learning_rate_min)
+                        model.optim_state.learningRate = learning_rate
+                        logging:info(string.format('Decay lr, current Lr: %f', learning_rate))
+                    end
+                    prev_val_loss = val_loss
                 end
-                break
             end
         end -- while true
         if forward_only then
             logging:info(string.format('Epoch: %d Number of samples %d - Accuracy = %f', epoch, num_samples, accuracy/num_samples))
         else
-            logging:info('Saving model')
             local model_path = paths.concat(model_dir, string.format('model-%d', model.global_step))
             model:save(model_path)
             logging:info(string.format('Model saved to %s', model_path))
@@ -172,7 +202,7 @@ function train(model, phase, batch_size, num_epochs, train_data, val_data, model
                     val_accuracy = val_accuracy + stats[2]
                 end
             end
-            logging:info(string.format('Step %d - Val Accuracy = %f, loss = %f', model.global_step, val_accuracy/val_num_samples, math.exp(val_loss/val_num_nonzeros)))
+            logging:info(string.format('Epoch: %d, Step %d - Val Accuracy = %f, loss = %f', epoch, model.global_step, val_accuracy/val_num_samples, math.exp(val_loss/val_num_nonzeros)))
             local learning_rate = model.optim_state.learning_rate
             if prev_val_loss ~= nil and val_loss > prev_val_loss and learning_rate > opt.learning_rate_min then
                 learning_rate = math.max(learning_rate*opt.lr_decay, opt.learning_rate_min)
