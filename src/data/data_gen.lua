@@ -62,23 +62,33 @@ function DataGen:nextBatch(batch_size)
         if self.cursor > #self.lines then
             break
         end
-        local img_path = self.lines[self.cursor][1]
-        local status, img = pcall(image.load, paths.concat(self.data_base_dir, img_path))
-        if not status then
+        if self.lines[self.cursor][3] == nil then
+            local img_path = self.lines[self.cursor][1]
+            local status, img = pcall(image.load, paths.concat(self.data_base_dir, img_path))
+            if status then
+                local label_str = self.lines[self.cursor][2]
+                local label_list = str2numlist(label_str)
+                img = 255.0*image.rgb2y(img)
+                local origH = img:size()[2]
+                local origW = img:size()[3]
+                local aspect_ratio = origW / origH
+                aspect_ratio = math.min(aspect_ratio, self.max_aspect_ratio)
+                aspect_ratio = math.max(aspect_ratio, self.min_aspect_ratio)
+                local imgW = math.ceil(aspect_ratio *self.imgH)
+                imgW = 100
+                img = image.scale(img, imgW, self.imgH)
+                self.lines[self.cursor][3] = img:clone()
+                self.lines[self.cursor][4] = tds.Vec(label_list)
+            end
+        end
+        if self.lines[self.cursor][3] == nil then
             self.cursor = self.cursor + 1
         else
-            local label_str = self.lines[self.cursor][2]
-            local label_list = str2numlist(label_str)
+            local img_path = self.lines[self.cursor][1]
+            local img = self.lines[self.cursor][3]
+            local imgW = img:size()[3]
+            local label_list = self.lines[self.cursor][4]
             self.cursor = self.cursor + 1
-            img = 255.0*image.rgb2y(img)
-            local origH = img:size()[2]
-            local origW = img:size()[3]
-            local aspect_ratio = origW / origH
-            aspect_ratio = math.min(aspect_ratio, self.max_aspect_ratio)
-            aspect_ratio = math.max(aspect_ratio, self.min_aspect_ratio)
-            local imgW = math.ceil(aspect_ratio *self.imgH)
-            imgW = 100
-            img = image.scale(img, imgW, self.imgH)
             if self.buffer[imgW] == nil then
                 self.buffer[imgW] = {}
             end
