@@ -159,7 +159,7 @@ function train(model, phase, batch_size, num_epochs, train_data, val_data, model
                         end
                     end
                     logging:info(string.format('Step %d - Val Accuracy = %f, loss = %f', model.global_step, val_accuracy/val_num_samples, math.exp(val_loss/val_num_nonzeros)))
-                    local learning_rate = model.optim_state.learning_rate
+                    local learning_rate = model.optim_state.learningRate
                     if prev_val_loss ~= nil and val_loss > prev_val_loss and learning_rate > opt.learning_rate_min then
                         learning_rate = math.max(learning_rate*opt.lr_decay, opt.learning_rate_min)
                         model.optim_state.learningRate = learning_rate
@@ -203,7 +203,7 @@ function train(model, phase, batch_size, num_epochs, train_data, val_data, model
                 end
             end
             logging:info(string.format('Epoch: %d, Step %d - Val Accuracy = %f, loss = %f', epoch, model.global_step, val_accuracy/val_num_samples, math.exp(val_loss/val_num_nonzeros)))
-            local learning_rate = model.optim_state.learning_rate
+            local learning_rate = model.optim_state.learningRate
             if prev_val_loss ~= nil and val_loss > prev_val_loss and learning_rate > opt.learning_rate_min then
                 learning_rate = math.max(learning_rate*opt.lr_decay, opt.learning_rate_min)
                 model.optim_state.learningRate = learning_rate
