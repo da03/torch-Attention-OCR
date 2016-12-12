@@ -51,7 +51,7 @@ function model:load(model_path, config)
 
     local checkpoint = torch.load(model_path)
     local model, model_config = checkpoint[1], checkpoint[2]
-    preallocateMemory(model_config.prealloc)
+    preallocateMemory(config.prealloc)
     self.cnn_model = model[1]:double()
     self.encoder_fw = model[2]:double()
     self.encoder_bw = model[3]:double()
@@ -74,6 +74,7 @@ function model:load(model_path, config)
     self.max_encoder_l = config.max_encoder_l or model_config.max_encoder_l
     self.max_decoder_l = config.max_decoder_l or model_config.max_decoder_l
     self.batch_size = config.batch_size or model_config.batch_size
+    self.prealloc = config.prealloc
     self:_build()
 end
 
