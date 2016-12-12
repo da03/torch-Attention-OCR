@@ -70,6 +70,7 @@ function model:load(model_path, config)
     self.target_vocab_size = model_config.target_vocab_size
     self.target_embedding_size = model_config.target_embedding_size
     self.input_feed = model_config.input_feed
+    self.prealloc = config.prealloc
 
     self.max_encoder_l = config.max_encoder_l or model_config.max_encoder_l
     self.max_decoder_l = config.max_decoder_l or model_config.max_decoder_l
