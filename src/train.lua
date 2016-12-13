@@ -45,11 +45,8 @@ cmd:option('-lr_decay', 0.5, [[Decay learning rate by this much if (i) perplexit
 
 -- Network
 cmd:option('-dropout', 0.0, [[Dropout probability]])
-cmd:option('-target_embedding_size', 20, [[Embedding dimension for each target]])
-cmd:option('-input_feed', false, [[Whether or not use LSTM attention decoder cell]])
-cmd:option('-encoder_num_hidden', 512, [[Number of hidden units in encoder cell]])
-cmd:option('-encoder_num_layers', 1, [[Number of hidden layers in encoder cell]])
-cmd:option('-decoder_num_layers', 2, [[Number of hidden units in decoder cell]])
+cmd:option('-encoder_num_hidden', 930, [[Number of hidden units in encoder cell]])
+cmd:option('-encoder_num_layers', 2, [[Number of hidden layers in encoder cell]])
 cmd:option('-target_vocab_size', 26+10+1, [[Target vocabulary size. Default is = 26+10+3 # 1: BLANK, >1: 0-9, a-z]])
 
 -- Other
@@ -58,7 +55,6 @@ cmd:option('-gpu_id', 1, [[Which gpu to use. <=0 means use CPU]])
 cmd:option('-load_model', false, [[Load model from model-dir or not]])
 cmd:option('-visualize', false, [[Print results or not]])
 cmd:option('-seed', 910820, [[Load model from model-dir or not]])
-cmd:option('-max_decoder_l', 50, [[Maximum number of output targets]]) -- when evaluate, this is the cut-off length.
 cmd:option('-max_encoder_l', 80, [[Maximum length of input feature sequence]]) --320*10/4-1
 cmd:option('-prealloc', false, [[Use memory preallocation and sharing between cloned encoder/decoders]])
 

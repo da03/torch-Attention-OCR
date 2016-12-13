@@ -24,9 +24,7 @@ local model = torch.class('Model')
 -- config.dropout
 -- config.encoder_num_hidden
 -- config.encoder_num_layers
--- config.decoder_num_layers
 -- config.max_encoder_l
--- config.max_decoder_l
 -- config.batch_size
 --]]
 
@@ -63,7 +61,6 @@ function model:load(model_path, config)
     self.encoder_num_hidden = model_config.encoder_num_hidden
     self.encoder_num_layers = model_config.encoder_num_layers
     self.target_vocab_size = model_config.target_vocab_size
-    self.input_feed = model_config.input_feed
     self.prealloc = config.prealloc
 
     self.max_encoder_l = config.max_encoder_l or model_config.max_encoder_l
@@ -80,7 +77,6 @@ function model:create(config)
     self.encoder_num_layers = config.encoder_num_layers
     self.target_vocab_size = config.target_vocab_size
     self.max_encoder_l = config.max_encoder_l
-    self.input_feed = config.input_feed
     self.batch_size = config.batch_size
     self.prealloc = config.prealloc
 
@@ -88,7 +84,6 @@ function model:create(config)
 
     -- CNN model, input size: (batch_size, 1, 32, width), output size: (batch_size, sequence_length, 512)
     self.cnn_model = createCNNModel()
-     createLSTM(input_size, num_hidden, num_layers, dropout, use_attention, input_feed, use_lookup, vocab_size)
     self.encoder_fw = createLSTM(self.cnn_feature_size, self.encoder_num_hidden, self.encoder_num_layers, self.dropout, false, false, false, nil, self.batch_size, self.max_encoder_l, 'encoder-fw')
     self.encoder_bw = createLSTM(self.cnn_feature_size, self.encoder_num_hidden, self.encoder_num_layers, self.dropout, false, false, false, nil, self.batch_size, self.max_encoder_l, 'encoder-bw')
     self.output_projector = createOutputUnit(2*self.encoder_num_hidden, self.target_vocab_size)
@@ -124,7 +119,6 @@ function model:_build()
     end
 
     -- convert to cuda if use gpu
-    --self.layers = {self.cnn_model, self.encoder_fw, self.encoder_bw, self.decoder, self.output_projector}
     self.layers = {self.cnn_model, self.encoder_fw, self.encoder_bw, self.output_projector}
     for i = 1, #self.layers do
         localize(self.layers[i])
