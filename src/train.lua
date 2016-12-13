@@ -21,7 +21,7 @@ cmd:text('')
 cmd:option('-data_base_dir', '/n/rush_lab/data/image_data/90kDICT32px', [[The base directory of the image path in data-path. If the image path in data-path is absolute path, set it to /]])
 cmd:option('-data_path', '/n/rush_lab/data/image_data/train_shuffled_shuffled_words.txt', [[The path containing data file names and labels. Format per line: image_path characters]])
 cmd:option('-val_data_path', '/n/rush_lab/data/image_data/val_shuffled_words.txt', [[The path containing validate data file names and labels. Format per line: image_path characters]])
-cmd:option('-model_dir', 'train', [[The directory for saving and loading model parameters (structure is not stored)]])
+cmd:option('-model_dir', 'model', [[The directory for saving and loading model parameters and structure.]])
 cmd:option('-log_path', 'log.txt', [[The path to put log]])
 cmd:option('-output_dir', 'results', [[The path to put visualization results if visualize is set to True]])
 
@@ -50,7 +50,7 @@ cmd:option('-input_feed', false, [[Whether or not use LSTM attention decoder cel
 cmd:option('-encoder_num_hidden', 512, [[Number of hidden units in encoder cell]])
 cmd:option('-encoder_num_layers', 1, [[Number of hidden layers in encoder cell]])
 cmd:option('-decoder_num_layers', 2, [[Number of hidden units in decoder cell]])
-cmd:option('-target_vocab_size', 26+10+3, [[Target vocabulary size. Default is = 26+10+3 # 1: PADDING, 2: GO, 3: EOS, >3: 0-9, a-z]])
+cmd:option('-target_vocab_size', 26+10+1, [[Target vocabulary size. Default is = 26+10+3 # 1: BLANK, >1: 0-9, a-z]])
 
 -- Other
 cmd:option('-phase', 'test', [[train or test]])
@@ -100,7 +100,7 @@ function train(model, phase, batch_size, num_epochs, train_data, val_data, model
             end
             local real_batch_size = train_batch[1]:size()[1]
             local step_loss, stats = model:step(train_batch, forward_only, beam_size, trie)
-            logging:info(string.format('%f', math.exp(loss/num_nonzeros)))
+            logging:info(string.format('%f', math.exp(step_loss/stats[1])))
             num_seen = num_seen + 1
             num_samples = num_samples + real_batch_size
             num_nonzeros = num_nonzeros + stats[1]

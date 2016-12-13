@@ -94,30 +94,28 @@ function DataGen:nextBatch(batch_size)
             end
             table.insert(self.buffer[imgW], {img:clone(), label_list, img_path})
             if #self.buffer[imgW] == batch_size then
+                local sizes, labels = {}, {}
+                for i = 1, #self.buffer[imgW] do
+                    labels[i] = {}
+                    for j = 1, #self.buffer[imgW][i][2]-2 do
+                        labels[i][j] = self.buffer[imgW][i][2][j+1]
+                    end
+                    sizes[i] = #self.buffer[imgW][i][2]-2
+                end
                 local images = torch.Tensor(batch_size, 1, self.imgH, imgW)
-                local max_target_length = -math.huge
                 -- visualize
                 local img_paths = {}
                 for i = 1, #self.buffer[imgW] do
                     img_paths[i] = self.buffer[imgW][i][3]
                     images[i]:copy(self.buffer[imgW][i][1])
-                    max_target_length = math.max(max_target_length, #self.buffer[imgW][i][2])
                 end
-                -- targets: use as input. SOS, ch1, ch2, ..., chn
-                local targets = torch.IntTensor(batch_size, max_target_length-1):fill(1)
-                -- targets_eval: use for evaluation. ch1, ch2, ..., chn, EOS
-                local targets_eval = torch.IntTensor(batch_size, max_target_length-1):fill(1)
                 local num_nonzeros = 0
                 for i = 1, #self.buffer[imgW] do
                     num_nonzeros = num_nonzeros + #self.buffer[imgW][i][2] - 1
-                    for j = 1, #self.buffer[imgW][i][2]-1 do
-                        targets[i][j] = self.buffer[imgW][i][2][j] 
-                        targets_eval[i][j] = self.buffer[imgW][i][2][j+1] 
-                    end
                 end
                 self.buffer[imgW] = nil
                 --collectgarbage()
-                do return {images, targets, targets_eval, num_nonzeros, img_paths} end
+                do return {images, nil, nil, num_nonzeros, img_paths, sizes, labels} end
             end
         end
     end
@@ -130,25 +128,25 @@ function DataGen:nextBatch(batch_size)
     local imgW, v = next(self.buffer, nil)
     real_batch_size = #self.buffer[imgW]
     local images = torch.Tensor(real_batch_size, 1, self.imgH, imgW)
-    local max_target_length = -math.huge
     -- visualize
     local img_paths = {}
     for i = 1, #self.buffer[imgW] do
         img_paths[i] = self.buffer[imgW][i][3]
         images[i]:copy(self.buffer[imgW][i][1])
-        max_target_length = math.max(max_target_length, #self.buffer[imgW][i][2])
     end
-    local targets = torch.IntTensor(real_batch_size, max_target_length-1):fill(1)
-    local targets_eval = torch.IntTensor(real_batch_size, max_target_length-1):fill(1)
     local num_nonzeros = 0
+    local sizes, labels = {}, {}
+    for i = 1, #self.buffer[imgW] do
+        labels[i] = {}
+        for j = 1, #self.buffer[imgW][i][2]-2 do
+            labels[i][j] = self.buffer[imgW][i][2][j+1]
+        end
+        sizes[i] = #self.buffer[imgW][i][2]-2
+    end
     for i = 1, #self.buffer[imgW] do
         num_nonzeros = num_nonzeros + #self.buffer[imgW][i][2] - 1
-        for j = 1, #self.buffer[imgW][i][2]-1 do
-            targets[i][j] = self.buffer[imgW][i][2][j] 
-            targets_eval[i][j] = self.buffer[imgW][i][2][j+1] 
-        end
     end
     self.buffer[imgW] = nil
     --collectgarbage()
-    return {images, targets, targets_eval, num_nonzeros, img_paths}
+    return {images, nil, nil, num_nonzeros, img_paths, sizes, labels}
 end

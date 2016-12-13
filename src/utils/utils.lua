@@ -5,6 +5,17 @@ if logging ~= nil then
 else
     log = print
 end
+function reduce(list)
+    local acc
+    for k, v in ipairs(list) do
+        if 1 == k then
+            acc = v
+        else
+            acc = acc +  v
+        end
+    end
+    return acc
+end
 -- http://stackoverflow.com/questions/17119804/lua-array-shuffle-not-working
 function swap(array, index1, index2)
     array[index1], array[index2] = array[index2], array[index1]
@@ -111,7 +122,7 @@ function str2numlist(label_str)
         else -- 0: 48, to 4; 9: 57, to 13
             vocab_id = l - 48 + 3 + 1
         end
-        table.insert(label_list, vocab_id)
+        table.insert(label_list, vocab_id-3)
     end
     table.insert(label_list, 3)
     return label_list
@@ -120,7 +131,7 @@ end
 function numlist2str(label_list)
     local str = {}
     for i = 1, #label_list do
-        local vocab_id = label_list[i]
+        local vocab_id = label_list[i] + 3
         local l
         if vocab_id > 13 then
             l = vocab_id - 1 - 13 + 97
@@ -133,34 +144,15 @@ function numlist2str(label_list)
     return label_str 
 end
 
-function evalWordErrRate(labels, target_labels, visualize)
-    local batch_size = labels:size()[1]
-    local target_l = labels:size()[2]
-    assert(batch_size == target_labels:size()[1])
-    assert(target_l == target_labels:size()[2])
+function evalWordErrRate(labels, ctc_labels, visualize)
+    local batch_size = #labels
 
     local word_error_rate = 0.0
     local labels_pred = {}
     local labels_gold = {}
     for b = 1, batch_size do
-        local label_list = {}
-        for t = 1, target_l do
-            local label = labels[b][t]
-            if label == 3 then
-                break
-            end
-            table.insert(label_list, label)
-        end
-        local target_label_list = {}
-        for t = 1, target_l do
-            local label = target_labels[b][t]
-            if label == 3 then
-                break
-            end
-            table.insert(target_label_list, label)
-        end
-        local label_str = numlist2str(label_list)
-        local target_label_str = numlist2str(target_label_list)
+        local label_str = numlist2str(labels[b])
+        local target_label_str = numlist2str(ctc_labels[b])
         if visualize then
             table.insert(labels_pred, label_str)
             table.insert(labels_gold, target_label_str)
